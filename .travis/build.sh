@@ -22,10 +22,13 @@ if [ -z "${TRAVIS_OS_NAME+x}" ]; then
 fi
 
 if [[ $TRAVIS_OS_NAME = 'osx' ]]; then
-    # TODO(dmarting) ./compile.sh all
+    export JAVA_VERSION=1.7
+    sed -i.bak 's/_version = "8",/_version = "7",/' tools/jdk/BUILD
+    cat .travis/jdk7.WORKSPACE >WORKSPACE
+    ./compile.sh all
 else
     sudo apt-get update -qq
-    sudo apt-get install -y netcat-traditional
+    sudo apt-get install -y protobuf-compiler netcat-traditional
     sudo update-alternatives --set nc /bin/nc.traditional
     export JAVA_HOME=/usr/lib/jvm/java-8-oracle
     export JAVA_OPTS="-Xmx3000m"
