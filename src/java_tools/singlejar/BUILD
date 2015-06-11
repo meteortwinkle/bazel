@@ -52,6 +52,7 @@ java_test(
         "//third_party:junit4",
         "//third_party:truth",
     ],
+    tags = ["zip"],
 )
 
 #

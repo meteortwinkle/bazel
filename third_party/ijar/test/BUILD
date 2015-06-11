@@ -38,6 +38,7 @@ sh_test(
         "//tools/defaults:jdk",
         "//tools/jdk:langtools",
     ],
+    tags = ["zip"],
     shard_count = 5,
 )
 
@@ -56,6 +57,7 @@ sh_test(
         "//src/test/shell:bashunit",
         "//third_party/ijar:zipper",
     ],
+    tags = ["zip"],
 )
 
 java_library(
@@ -116,6 +118,7 @@ java_test(
         "//third_party:asm",
         "//third_party:junit4",
     ],
+    tags = ["zip"],
 )
 
 test_suite(
