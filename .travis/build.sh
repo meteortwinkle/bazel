@@ -25,9 +25,9 @@ if [[ $TRAVIS_OS_NAME = 'osx' ]]; then
     export JAVA_VERSION=1.7
     sed -i.bak 's/_version = "8",/_version = "7",/' tools/jdk/BUILD
     cat .travis/jdk7.WORKSPACE >WORKSPACE
-    # Ignore zip tests as they requires to much space and a JDK 8
+    # Ignore zip tests as they requires to much space and jdk8 stuff
     cat <<'EOF' >.bazelrc
-build --test_tag_filters -zip
+build --test_tag_filters -zip,-jdk8
 EOF
     export BAZELRC=$PWD/.bazelrc
     ./compile.sh all

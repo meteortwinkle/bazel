@@ -65,6 +65,7 @@ java_library(
     testonly = 1,
     srcs = ["invokedynamic/ClassWithLambda.java"],
     javacopts = ["-source 8 -target 8"],
+    tags = ["jdk8"],
 )
 
 # For testing purposes: a class which exposes a private nested class in
@@ -96,6 +97,7 @@ java_library(
     name = "typeannotations2",
     srcs = glob(["typeannotations2/**/*.java"]),
     javacopts = ["-source 8 -target 8"],
+    tags = ["jdk8"],
 )
 
 java_test(
