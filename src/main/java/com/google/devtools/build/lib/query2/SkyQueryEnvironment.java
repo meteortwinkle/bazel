@@ -274,7 +274,7 @@ public class SkyQueryEnvironment extends AbstractBlazeQueryEnvironment<Target> {
   }
 
   private static Target getSubincludeTarget(final Label label, Package pkg) {
-    return new FakeSubincludeTarget(label, pkg.getBuildFile().getLocation());
+    return new FakeSubincludeTarget(label, pkg);
   }
 
   @Override
@@ -337,8 +337,8 @@ public class SkyQueryEnvironment extends AbstractBlazeQueryEnvironment<Target> {
       SkyKey patternKey = TargetPatternValue.key(pattern,
           TargetPatternEvaluator.DEFAULT_FILTERING_POLICY, parserPrefix);
 
-      TargetPatternValue.TargetPattern targetPattern =
-          ((TargetPatternValue.TargetPattern) patternKey.argument());
+      TargetPatternValue.TargetPatternKey targetPatternKey =
+          ((TargetPatternValue.TargetPatternKey) patternKey.argument());
 
       TargetParsingException targetParsingException = null;
       if (graph.exists(patternKey)) {
@@ -354,6 +354,10 @@ public class SkyQueryEnvironment extends AbstractBlazeQueryEnvironment<Target> {
           }
           result.put(pattern, targetsBuilder.build());
         } else {
+          // Because the graph was always initialized via a keep_going build, we know that the
+          // exception stored here must be a TargetParsingException. Thus the comment in
+          // SkyframeTargetPatternEvaluator#parseTargetPatternKeys describing the situation in which
+          // the exception acceptance must be looser does not apply here.
           targetParsingException =
               (TargetParsingException)
                   Preconditions.checkNotNull(graph.getException(patternKey), pattern);
@@ -361,11 +365,10 @@ public class SkyQueryEnvironment extends AbstractBlazeQueryEnvironment<Target> {
       } else {
         // If the graph doesn't contain a value for this target pattern, try to directly evaluate
         // it, by making use of packages already present in the graph.
-        TargetPattern.Parser parser = new TargetPattern.Parser(targetPattern.getOffset());
         RecursivePackageProviderBackedTargetPatternResolver resolver =
             new RecursivePackageProviderBackedTargetPatternResolver(provider, eventHandler,
-                targetPattern.getPolicy(), pkgPath);
-        TargetPattern parsedPattern = parser.parse(targetPattern.getPattern());
+                targetPatternKey.getPolicy(), pkgPath);
+        TargetPattern parsedPattern = targetPatternKey.getParsedPattern();
         try {
           result.put(pattern, parsedPattern.eval(resolver));
         } catch (TargetParsingException e) {

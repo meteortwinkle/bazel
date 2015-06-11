@@ -41,7 +41,7 @@ EOF
 }
 
 function bazel() {
-  ${bazel} --blazerc=$TEST_TMPDIR/bazelrc "$@"
+  ${bazel} --bazelrc=$TEST_TMPDIR/bazelrc "$@"
 }
 
 function setup_protoc_support() {
@@ -53,9 +53,9 @@ function setup_protoc_support() {
 cat <<EOF > third_party/BUILD
 package(default_visibility = ["//visibility:public"])
 exports_files(["protoc"])
-filegroup(
+java_import(
   name = "protobuf",
-  srcs = [ "protobuf-java.jar"])
+  jars = ["protobuf-java.jar"])
 
 EOF
 }
@@ -116,10 +116,6 @@ function create_new_workspace() {
   ln -s "${singlejar_path}"  tools/jdk/SingleJar_deploy.jar
   ln -s "${ijar_path}" tools/jdk/ijar
 
-  if [[ -d ${jdk_dir} ]] ; then
-    ln -s ${jdk_dir} tools/jdk/jdk
-  fi
-
   touch WORKSPACE
 }
 
@@ -134,16 +130,16 @@ function setup_clean_workspace() {
   export BAZEL_GENFILES_DIR=$(bazel info bazel-genfiles)
 }
 
-# Clean-up all files that are not in tools or third_party to
-# restart from a clean workspace
+# Clean up all files that are not in tools directories, to restart
+# from a clean workspace
 function cleanup_workspace() {
   if [ -d "${WORKSPACE_DIR:-}" ]; then
     echo "Cleaning up workspace"
     cd ${WORKSPACE_DIR}
-    bazel clean  # Cleanup the output base
+    bazel clean  # Clean up the output base
 
     for i in $(ls); do
-      if [ "$i" != '*' -a "$i" != "tools" -a "$i" != "third_party" ]; then
+      if ! is_tools_directory "$i"; then
         rm -fr "$i"
       fi
     done
@@ -172,21 +168,24 @@ function tear_down() {
 # Simples assert to make the tests more readable
 #
 function assert_build() {
-  bazel build -s $1 || fail "Failed to build $1"
+  bazel build -s $* || fail "Failed to build $*"
+}
 
-  if [ -n "${2:-}" ]; then
-    test -f "$2" || fail "Output $2 not found for target $1"
-  fi
+function assert_build_output() {
+  local OUTPUT=$1
+  shift
+  assert_build "$*"
+  test -f "$OUTPUT" || fail "Output $OUTPUT not found for target $*"
 }
 
 function assert_test_ok() {
-  bazel test --test_output=errors $1 \
+  bazel test --test_output=errors $* \
     || fail "Test $1 failed while expecting success"
 }
 
 function assert_test_fails() {
-  bazel test --test_output=errors $1 >& $TEST_log \
-    && fail "Test $1 succeed while expecting failure" \
+  bazel test --test_output=errors $* >& $TEST_log \
+    && fail "Test $* succeed while expecting failure" \
     || true
   expect_log "$1.*FAILED"
 }
@@ -203,5 +202,6 @@ function assert_bazel_run() {
   assert_binary_run "./bazel-bin/$(echo "$1" | sed 's|^//||' | sed 's|:|/|')" "${2:-}"
 }
 
-setup_clean_workspace
 setup_bazelrc
+setup_clean_workspace
+bazel fetch //tools/jdk/...

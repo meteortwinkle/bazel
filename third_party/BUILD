@@ -8,12 +8,22 @@ filegroup(
 filegroup(
     name = "protoc",
     srcs = select({
-        ":windows_mingw": ["protobuf/protoc.exe"],
-        ":windows_msys64_mingw64": ["protobuf/protoc.exe"],
-        ":windows_clang": ["protobuf/protoc.exe"],
-        ":darwin": ["protobuf/protoc.darwin"],
-        "//conditions:default": ["protobuf/protoc.linux-i686"],
+        ":windows_mingw": ["protobuf/protoc-windows-x86_32.exe"],
+        ":windows_msys64_mingw64": ["protobuf/protoc-windows-x86_64.exe"],
+        ":windows_clang": ["protobuf/protoc-windows-x86_32.exe"],
+        ":darwin": ["protobuf/protoc-osx-x86_32.exe"],
+        "//conditions:default": ["protobuf/protoc-linux-x86_32.exe"],
     }),
+)
+
+filegroup(
+    name = "d3-js",
+    srcs = glob(["javascript/d3/**/*.js"]),
+)
+
+filegroup(
+    name = "jquery",
+    srcs = glob(["javascript/jquery/**/*.jslib"]),
 )
 
 java_import(
@@ -44,6 +54,11 @@ java_import(
 java_import(
     name = "apache_commons_logging",
     jars = ["apache_commons_logging/commons-logging-1.1.1.jar"],
+)
+
+java_import(
+    name = "apache_commons_pool2",
+    jars = ["apache_commons_pool2/commons-pool2-2.3.jar"],
 )
 
 java_import(
@@ -141,8 +156,25 @@ java_import(
 )
 
 java_import(
+    name = "error_prone",
+    jars = ["error_prone/error_prone_core-2.0.2.jar"],
+)
+
+# For bootstrapping JavaBuilder
+filegroup(
+    name = "error_prone-jars",
+    srcs = ["error_prone/error_prone_core-2.0.2.jar"],
+)
+
+java_import(
     name = "guava",
     jars = ["guava/guava-18.0.jar"],
+)
+
+# For bootstrapping JavaBuilder
+filegroup(
+    name = "guava-jars",
+    srcs = ["guava/guava-18.0.jar"],
 )
 
 java_import(
@@ -153,6 +185,12 @@ java_import(
 java_import(
     name = "jsr305",
     jars = ["jsr305/jsr-305.jar"],
+)
+
+# For bootstrapping JavaBuilder
+filegroup(
+    name = "jsr305-jars",
+    srcs = ["jsr305/jsr-305.jar"],
 )
 
 java_import(
@@ -170,6 +208,11 @@ java_import(
 )
 
 java_import(
+    name = "plexus_component_annotations",
+    jars = ["plexus_component_annotations/plexus-component-annotations-1.6.jar"],
+)
+
+java_import(
     name = "plexus_interpolation",
     jars = ["plexus_interpolation/plexus-interpolation-1.22.jar"],
 )
@@ -181,7 +224,13 @@ java_import(
 
 java_import(
     name = "protobuf",
-    jars = ["protobuf/protobuf-2.5.0.jar"],
+    jars = ["protobuf/protobuf-java-3.0.0-alpha-3.jar"],
+)
+
+# For bootstrapping JavaBuilder
+filegroup(
+    name = "protobuf-jars",
+    srcs = ["protobuf/protobuf-java-3.0.0-alpha-3.jar"],
 )
 
 java_import(

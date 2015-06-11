@@ -17,6 +17,7 @@ import com.google.common.base.Joiner;
 import com.google.common.collect.ImmutableList;
 import com.google.devtools.build.lib.events.Location;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -78,12 +79,16 @@ public final class SelectorList {
     ImmutableList.Builder<Object> builder = ImmutableList.builder();
     Class<?> type1 = addValue(value1, builder);
     Class<?> type2 = addValue(value2, builder);
-    if (type1 != type2) {
+    if (!canConcatenate(type1, type2)) {
       throw new EvalException(location, "'+' operator applied to incompatible types");
     }
     return new SelectorList(type1, builder.build());
   }
   
+  // TODO(bazel-team): match on the List interface, not the actual implementation. For now,
+  // we verify this is the right class through test coverage.
+  private static final Class<?> NATIVE_LIST_TYPE = ArrayList.class;
+
   private static Class<?> addValue(Object value, ImmutableList.Builder<Object> builder) {
     if (value instanceof SelectorList) {
       SelectorList selectorList = (SelectorList) value;
@@ -95,6 +100,22 @@ public final class SelectorList {
     } else {
       builder.add(value);
       return value.getClass();
+    }
+  }
+
+  private static boolean isListType(Class<?> type) {
+    return type == NATIVE_LIST_TYPE
+        || type.getSuperclass() == SkylarkList.class
+        || type == GlobList.class;
+  }
+
+  private static boolean canConcatenate(Class<?> type1, Class<?> type2) {
+    if (type1 == type2) {
+      return true;
+    } else if (isListType(type1) && isListType(type2)) {
+      return true;
+    } else {
+      return false;
     }
   }
 

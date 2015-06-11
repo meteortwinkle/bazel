@@ -286,7 +286,7 @@ public final class BuildConfiguration implements Serializable {
         // Check if the input starts with '/'. We don't check for "//" so that
         // we get a better error message if the user accidentally tries to use
         // an absolute path (starting with '/') for a label.
-        if (!input.startsWith("/")) {
+        if (!input.startsWith("/") && !input.startsWith("@")) {
           input = "//" + input;
         }
         return Label.parseAbsolute(input);
@@ -993,7 +993,7 @@ public final class BuildConfiguration implements Serializable {
     return builder.build();
   }
 
-  BuildConfiguration(BlazeDirectories directories,
+  public BuildConfiguration(BlazeDirectories directories,
                      Map<Class<? extends Fragment>, Fragment> fragmentsMap,
                      BuildOptions buildOptions,
                      boolean actionsDisabled) {
@@ -1055,8 +1055,6 @@ public final class BuildConfiguration implements Serializable {
     // These variables will be used on Windows as well, so we need to make sure
     // that paths use the correct system file-separator.
     globalMakeEnvBuilder.put("BINDIR", getBinDirectory().getExecPath().getPathString());
-    globalMakeEnvBuilder.put("INCDIR",
-        getIncludeDirectory().getExecPath().getPathString());
     globalMakeEnvBuilder.put("GENDIR", getGenfilesDirectory().getExecPath().getPathString());
     globalMakeEnv = globalMakeEnvBuilder.build();
 

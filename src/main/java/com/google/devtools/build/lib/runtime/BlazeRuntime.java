@@ -75,11 +75,11 @@ import com.google.devtools.build.lib.runtime.commands.CanonicalizeCommand;
 import com.google.devtools.build.lib.runtime.commands.CleanCommand;
 import com.google.devtools.build.lib.runtime.commands.HelpCommand;
 import com.google.devtools.build.lib.runtime.commands.InfoCommand;
+import com.google.devtools.build.lib.runtime.commands.MobileInstallCommand;
 import com.google.devtools.build.lib.runtime.commands.ProfileCommand;
 import com.google.devtools.build.lib.runtime.commands.QueryCommand;
 import com.google.devtools.build.lib.runtime.commands.RunCommand;
 import com.google.devtools.build.lib.runtime.commands.ShutdownCommand;
-import com.google.devtools.build.lib.runtime.commands.SkylarkCommand;
 import com.google.devtools.build.lib.runtime.commands.TestCommand;
 import com.google.devtools.build.lib.runtime.commands.VersionCommand;
 import com.google.devtools.build.lib.server.RPCServer;
@@ -804,6 +804,9 @@ public final class BlazeRuntime {
       } catch (OptionsParsingException e) {
         throw new IllegalStateException(e);
       }
+    }
+    for (BlazeModule module : blazeModules) {
+      module.handleOptions(optionsParser);
     }
 
     eventBus.post(new CommandStartEvent(command.name(), commandId, clientEnv, workingDirectory));
@@ -1571,8 +1574,8 @@ public final class BlazeRuntime {
         new CanonicalizeCommand(),
         new CleanCommand(),
         new HelpCommand(),
-        new SkylarkCommand(),
         new InfoCommand(),
+        new MobileInstallCommand(),
         new ProfileCommand(),
         new QueryCommand(),
         new RunCommand(),

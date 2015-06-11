@@ -14,6 +14,10 @@
 
 package com.google.devtools.build.lib.syntax;
 
+import static com.google.devtools.build.lib.syntax.Parser.ParsingMode.BUILD;
+import static com.google.devtools.build.lib.syntax.Parser.ParsingMode.PYTHON;
+import static com.google.devtools.build.lib.syntax.Parser.ParsingMode.SKYLARK;
+
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Supplier;
@@ -66,8 +70,20 @@ class Parser {
     }
   }
 
+  /**
+   * ParsingMode is used to select which features the parser should accept.
+   */
+  public enum ParsingMode {
+    /** Used for parsing BUILD files */
+    BUILD,
+    /** Used for parsing .bzl files */
+    SKYLARK,
+    /** Used for syntax checking, ignoring all Python blocks (e.g. def, class, try) */
+    PYTHON,
+  }
+
   private static final EnumSet<TokenKind> STATEMENT_TERMINATOR_SET =
-    EnumSet.of(TokenKind.EOF, TokenKind.NEWLINE);
+      EnumSet.of(TokenKind.EOF, TokenKind.NEWLINE);
 
   private static final EnumSet<TokenKind> LIST_TERMINATOR_SET =
     EnumSet.of(TokenKind.EOF, TokenKind.RBRACKET, TokenKind.SEMI);
@@ -99,9 +115,7 @@ class Parser {
   private final Lexer lexer;
   private final EventHandler eventHandler;
   private final List<Comment> comments;
-  private final boolean parsePython;
-  /** Whether advanced language constructs are allowed */
-  private boolean skylarkMode = false;
+  private final ParsingMode parsingMode;
 
   private static final Map<TokenKind, Operator> binaryOperators =
       new ImmutableMap.Builder<TokenKind, Operator>()
@@ -147,11 +161,14 @@ class Parser {
 
   private List<Path> includedFiles;
 
-  private Parser(Lexer lexer, EventHandler eventHandler, CachingPackageLocator locator,
-                 boolean parsePython) {
+  private Parser(
+      Lexer lexer,
+      EventHandler eventHandler,
+      CachingPackageLocator locator,
+      ParsingMode parsingMode) {
     this.lexer = lexer;
     this.eventHandler = eventHandler;
-    this.parsePython = parsePython;
+    this.parsingMode = parsingMode;
     this.tokens = lexer.getTokens().iterator();
     this.comments = new ArrayList<>();
     this.locator = locator;
@@ -161,12 +178,7 @@ class Parser {
   }
 
   private Parser(Lexer lexer, EventHandler eventHandler, CachingPackageLocator locator) {
-    this(lexer, eventHandler, locator, false /* parsePython */);
-  }
-
-  public Parser setSkylarkMode(boolean skylarkMode) {
-    this.skylarkMode = skylarkMode;
-    return this;
+    this(lexer, eventHandler, locator, BUILD);
   }
 
   /**
@@ -174,12 +186,12 @@ class Parser {
    * encountered during parsing are reported via "reporter".
    */
   public static ParseResult parseFile(
-      Lexer lexer, EventHandler eventHandler, CachingPackageLocator locator,
-      boolean parsePython) {
-    Parser parser = new Parser(lexer, eventHandler, locator, parsePython);
+      Lexer lexer, EventHandler eventHandler, CachingPackageLocator locator, boolean parsePython) {
+    ParsingMode parsingMode = parsePython ? PYTHON : BUILD;
+    Parser parser = new Parser(lexer, eventHandler, locator, parsingMode);
     List<Statement> statements = parser.parseFileInput();
-    return new ParseResult(statements, parser.comments,
-        parser.errorsCount > 0 || lexer.containsErrors());
+    return new ParseResult(
+        statements, parser.comments, parser.errorsCount > 0 || lexer.containsErrors());
   }
 
   /**
@@ -188,15 +200,15 @@ class Parser {
    * that are not part of the core BUILD language.
    */
   public static ParseResult parseFileForSkylark(
-      Lexer lexer, EventHandler eventHandler, CachingPackageLocator locator,
+      Lexer lexer,
+      EventHandler eventHandler,
+      CachingPackageLocator locator,
       ValidationEnvironment validationEnvironment) {
-    Parser parser = new Parser(lexer, eventHandler, locator).setSkylarkMode(true);
+    Parser parser = new Parser(lexer, eventHandler, locator, SKYLARK);
     List<Statement> statements = parser.parseFileInput();
     boolean hasSemanticalErrors = false;
     try {
-      for (Statement statement : statements) {
-        statement.validate(validationEnvironment);
-      }
+      validationEnvironment.validateAst(statements);
     } catch (EvalException e) {
       // Do not report errors caused by a previous parsing error, as it has already been reported.
       if (!e.isDueToIncompleteAST()) {
@@ -324,13 +336,13 @@ class Parser {
 
   // Keywords that exist in Python and that we don't parse.
   private static final EnumSet<TokenKind> FORBIDDEN_KEYWORDS =
-      EnumSet.of(TokenKind.AS, TokenKind.ASSERT, TokenKind.BREAK, TokenKind.CONTINUE,
+      EnumSet.of(TokenKind.AS, TokenKind.ASSERT, 
           TokenKind.DEL, TokenKind.EXCEPT, TokenKind.FINALLY, TokenKind.FROM, TokenKind.GLOBAL,
           TokenKind.IMPORT, TokenKind.IS, TokenKind.LAMBDA, TokenKind.NONLOCAL, TokenKind.RAISE,
           TokenKind.TRY, TokenKind.WITH, TokenKind.WHILE, TokenKind.YIELD);
 
   private void checkForbiddenKeywords(Token token) {
-    if (parsePython || !FORBIDDEN_KEYWORDS.contains(token.kind)) {
+    if (parsingMode == PYTHON || !FORBIDDEN_KEYWORDS.contains(token.kind)) {
       return;
     }
     String error;
@@ -409,16 +421,30 @@ class Parser {
 
   // arg ::= IDENTIFIER '=' nontupleexpr
   //       | expr
+  //       | *args       (only in Skylark mode)
+  //       | **kwargs    (only in Skylark mode)
+  // To keep BUILD files declarative and easy to process, *args and **kwargs
+  // arguments are allowed only in Skylark mode.
   private Argument.Passed parseFuncallArgument() {
     final int start = token.left;
     // parse **expr
     if (token.kind == TokenKind.STAR_STAR) {
+      if (parsingMode != SKYLARK) {
+        reportError(
+            lexer.createLocation(token.left, token.right),
+            "**kwargs arguments are not allowed in BUILD files");
+      }
       nextToken();
       Expression expr = parseNonTupleExpression();
       return setLocation(new Argument.StarStar(expr), start, expr);
     }
     // parse *expr
     if (token.kind == TokenKind.STAR) {
+      if (parsingMode != SKYLARK) {
+        reportError(
+            lexer.createLocation(token.left, token.right),
+            "*args arguments are not allowed in BUILD files");
+      }
       nextToken();
       Expression expr = parseNonTupleExpression();
       return setLocation(new Argument.Star(expr), start, expr);
@@ -605,8 +631,8 @@ class Parser {
       // Insert call to the mocksubinclude function to get the dependencies right.
       list.add(mocksubincludeExpression(labelName, file.toString(), location));
 
-      Lexer lexer = new Lexer(inputSource, eventHandler, parsePython);
-      Parser parser = new Parser(lexer, eventHandler, locator, parsePython);
+      Lexer lexer = new Lexer(inputSource, eventHandler, parsingMode == PYTHON);
+      Parser parser = new Parser(lexer, eventHandler, locator, parsingMode);
       parser.addIncludedFiles(this.includedFiles);
       list.addAll(parser.parseFileInput());
     } catch (Label.SyntaxException e) {
@@ -788,15 +814,15 @@ class Parser {
           nextToken();
           Expression loopVar = parseForLoopVariables();
           expect(TokenKind.IN);
-          Expression listExpression = parseExpression();
-          listComprehension.add(loopVar, listExpression);
+          // The expression cannot be a ternary expression ('x if y else z') due to
+          // conflicts in Python grammar ('if' is used by the comprehension).
+          Expression listExpression = parseNonTupleExpression(0);
+          listComprehension.addFor(loopVar, listExpression);
           break;
 
         case IF:
-          reportError(lexer.createLocation(token.left, token.right),
-              "List comprehension with filtering is not yet supported");
           nextToken();
-          parseExpression();  // condition
+          listComprehension.addIf(parseExpression());
           break;
 
         case RBRACKET:
@@ -1080,7 +1106,9 @@ class Parser {
       Token identToken = token;
       Ident ident = parseIdent();
 
-      if (ident.getName().equals("include") && token.kind == TokenKind.LPAREN && !skylarkMode) {
+      if (ident.getName().equals("include")
+          && token.kind == TokenKind.LPAREN
+          && parsingMode == BUILD) {
         expect(TokenKind.LPAREN);
         if (token.kind == TokenKind.STRING) {
           include((String) token.value, list, lexer.createLocation(start, token.right));
@@ -1126,6 +1154,7 @@ class Parser {
   //     small_stmt ::= assign_stmt
   //                  | expr
   //                  | RETURN expr
+  //                  | flow_stmt
   //     assign_stmt ::= expr ('=' | augassign) expr
   //     augassign ::= ('+=' )
   // Note that these are in Python, but not implemented here (at least for now):
@@ -1143,6 +1172,8 @@ class Parser {
     int start = token.left;
     if (token.kind == TokenKind.RETURN) {
       return parseReturnStatement();
+    } else if (token.kind == TokenKind.BREAK || token.kind == TokenKind.CONTINUE)   {
+      return parseFlowStatement(token.kind);
     }
     Expression expression = parseExpression();
     if (token.kind == TokenKind.EQUALS) {
@@ -1354,15 +1385,15 @@ class Parser {
   // stmt ::= simple_stmt
   //        | compound_stmt
   private void parseStatement(List<Statement> list, boolean isTopLevel) {
-    if (token.kind == TokenKind.DEF && skylarkMode) {
+    if (token.kind == TokenKind.DEF && parsingMode == SKYLARK) {
       if (!isTopLevel) {
         reportError(lexer.createLocation(token.left, token.right),
             "nested functions are not allowed. Move the function to top-level");
       }
       parseFunctionDefStatement(list);
-    } else if (token.kind == TokenKind.IF && skylarkMode) {
+    } else if (token.kind == TokenKind.IF && parsingMode == SKYLARK) {
       list.add(parseIfStatement());
-    } else if (token.kind == TokenKind.FOR && skylarkMode) {
+    } else if (token.kind == TokenKind.FOR && parsingMode == SKYLARK) {
       if (isTopLevel) {
         reportError(lexer.createLocation(token.left, token.right),
             "for loops are not allowed on top-level. Put it into a function");
@@ -1380,6 +1411,12 @@ class Parser {
     }
   }
 
+  // flow_stmt ::= break_stmt | continue_stmt
+  private FlowStatement parseFlowStatement(TokenKind kind) {
+    expect(kind);
+    return (kind == TokenKind.BREAK) ? FlowStatement.BREAK : FlowStatement.CONTINUE;
+  }
+  
   // return_stmt ::= RETURN expr
   private ReturnStatement parseReturnStatement() {
     int start = token.left;
@@ -1393,7 +1430,7 @@ class Parser {
     int start = token.left;
     Token blockToken = token;
     syncTo(EnumSet.of(TokenKind.COLON, TokenKind.EOF)); // skip over expression or name
-    if (!parsePython) {
+    if (parsingMode == BUILD) {
       reportError(lexer.createLocation(start, token.right), "syntax error at '"
                   + blockToken + "': This Python-style construct is not supported. "
                   + Constants.PARSER_ERROR_EXTENSION_NEEDED);

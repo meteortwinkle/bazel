@@ -66,12 +66,13 @@ public class SkylarkRuleImplementationFunctions {
    *         outputs = [output1, output2, ...],
    *         executable = executable,
    *         arguments = [argument1, argument2, ...],
-   *         mnemonic = 'mnemonic',
+   *         mnemonic = 'Mnemonic',
    *         command = 'command',
    *     )
    */
   @SkylarkSignature(name = "action",
-      doc = "Creates an action that runs an executable or a shell command.",
+      doc = "Creates an action that runs an executable or a shell command. You must specify either "
+        + "<code>command</code> or <code>executable</code>.",
       objectType = SkylarkRuleContext.class,
       returnType = Environment.NoneType.class,
       mandatoryPositionals = {
@@ -88,9 +89,12 @@ public class SkylarkRuleImplementationFunctions {
         @Param(name = "arguments", type = SkylarkList.class, generic1 = String.class,
             defaultValue = "[]", doc = "command line arguments of the action"),
         @Param(name = "mnemonic", type = String.class, noneable = true,
-            defaultValue = "None", doc = "mnemonic"),
+            defaultValue = "None",
+            doc = "a one-word description of the action, e.g. CppCompile or GoLink"),
         @Param(name = "command", type = Object.class, // string or ListOf(string) or NoneType
-            defaultValue = "None", doc = "shell command to execute"),
+            defaultValue = "None", doc = "shell command to execute. It is usually preferable to "
+            + "use <code>executable</code> instead. Arguments are available with <code>$1</code>, "
+            + "<code>$2</code>, etc."),
         @Param(name = "progress_message", type = String.class, noneable = true,
             defaultValue = "None",
             doc = "progress message to show to the user during the build, "
@@ -126,6 +130,13 @@ public class SkylarkRuleImplementationFunctions {
       // TODO(bazel-team): builder still makes unnecessary copies of inputs, outputs and args.
       builder.addInputs(castList(inputs, Artifact.class));
       builder.addOutputs(castList(outputs, Artifact.class));
+      if (commandO != Environment.NONE && arguments.size() > 0) {
+        // When we use a shell command, add an empty argument before other arguments.
+        //   e.g.  bash -c "cmd" '' 'arg1' 'arg2'
+        // bash will use the empty argument as the value of $0 (which we don't care about).
+        // arg1 and arg2 will be $1 and $2, as a user exects.
+        builder.addArgument("");
+      }
       builder.addArguments(castList(arguments, String.class));
       if (executableO != Environment.NONE) {
         if (executableO instanceof Artifact) {

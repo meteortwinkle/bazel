@@ -20,6 +20,16 @@ filegroup(
     srcs = ["//external:java"],
 )
 
+filegroup(
+    name = "jar",
+    srcs = ["//external:jar"],
+)
+
+filegroup(
+    name = "javac",
+    srcs = ["//external:javac"],
+)
+
 BOOTCLASS_JARS = [
     "rt.jar",
     "resources.jar",
@@ -34,13 +44,18 @@ filegroup(
 )
 
 filegroup(
+    name = "extdir",
+    srcs = ["//external:extdir"],
+)
+
+filegroup(
     name = "langtools",
     srcs = ["//external:langtools"],
 )
 
 java_import(
     name = "langtools-neverlink",
-    jars = ["//external:langtools"],
+    jars = ["//tools/defaults:java_langtools"],
     neverlink = 1,
 )
 

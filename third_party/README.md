@@ -23,6 +23,12 @@ a minimal set of extra dependencies.
 * Version: 1.1.1
 * License: Apache License 2.0.
 
+[apache_commons_pool2](https://commons.apache.org/proper/commons-pool/)
+------------------------
+
+* Version: 2.3
+* License: Apache License 2.0.
+
 
 [apache_httpclient](http://hc.apache.org/httpclient-3.x/)
 -------------------
@@ -60,6 +66,11 @@ a minimal set of extra dependencies.
 * [auto_value](https://github.com/google/auto/tree/master/value) (version 1.0)
 * License: Apache License 2.0
 
+[Error Prone](github.com/google/error-prone)
+-------------
+
+* Version: 2.0.2
+* License: Apache License 2.0
 
 [Buck (iOS support)](http://facebook.github.io/buck/)
 --------------------
@@ -103,6 +114,13 @@ a minimal set of extra dependencies.
 * License: Apache License 2.0
 
 
+[jarjar](https://code.google.com/p/jarjar/)
+-----------
+
+* Version: 1.4
+* License: Apache License 2.0
+
+
 [joda-time](http://www.joda.org/joda-time/)
 -----------
 
@@ -142,14 +160,20 @@ a minimal set of extra dependencies.
 * License: Apache License 2.0
 
 
-[plexus_interpolation](http://plexus.codehaus.org/plexus-components/plexus-interpolation/)
+[plexus_component_annotations](http://mvnrepository.com/artifact/org.codehaus.plexus/plexus-component-annotations)
+----------------------
+
+* Version: 1.6
+* License: Apache License 2.0
+
+[plexus_interpolation](http://mvnrepository.com/artifact/org.codehaus.plexus/plexus-interpolation)
 ----------------------
 
 * Version: 1.22
 * License: Apache License 2.0
 
 
-[plexus_utils](http://plexus.codehaus.org/plexus-utils/)
+[plexus_utils](http://mvnrepository.com/artifact/org.codehaus.plexus/plexus-utils)
 --------------
 
 * Version: 3.0.21
@@ -185,5 +209,3 @@ Testing
 
 * Version: 0.24
 * License: Apache License 2.0
-
-

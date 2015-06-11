@@ -28,10 +28,12 @@ import com.google.devtools.build.lib.actions.AlreadyReportedActionExecutionExcep
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.actions.MissingInputFileException;
 import com.google.devtools.build.lib.actions.NotifyOnActionCacheHit;
+import com.google.devtools.build.lib.actions.PackageRootResolutionException;
 import com.google.devtools.build.lib.actions.PackageRootResolver;
 import com.google.devtools.build.lib.actions.Root;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.events.Event;
+import com.google.devtools.build.lib.packages.NoSuchPackageException;
 import com.google.devtools.build.lib.packages.PackageIdentifier;
 import com.google.devtools.build.lib.syntax.Label;
 import com.google.devtools.build.lib.util.Pair;
@@ -176,21 +178,31 @@ public class ActionExecutionFunction implements SkyFunction, CompletionReceiver 
    * the action cache's view of this action contains additional inputs, it will request metadata for
    * them, so we consider those inputs as dependencies of this action as well. Returns null if some
    * dependencies were missing and this ActionExecutionFunction needs to restart.
+   * @throws ActionExecutionFunctionException
    */
   @Nullable
-  private AllInputs collectInputs(Action action, Environment env) {
+  private AllInputs collectInputs(Action action, Environment env)
+      throws ActionExecutionFunctionException {
+    Iterable<Artifact> allKnownInputs = Iterables.concat(
+        action.getInputs(), action.getRunfilesSupplier().getArtifacts());
     if (action.inputsKnown()) {
-      return new AllInputs(action.getInputs());
+      return new AllInputs(allKnownInputs);
     }
+
     Preconditions.checkState(action.discoversInputs(), action);
     PackageRootResolverWithEnvironment resolver = new PackageRootResolverWithEnvironment(env);
-    Iterable<Artifact> actionCacheInputs =
-        skyframeActionExecutor.getActionCachedInputs(action, resolver);
+    Iterable<Artifact> actionCacheInputs;
+    try {
+      actionCacheInputs = skyframeActionExecutor.getActionCachedInputs(action, resolver);
+    } catch (PackageRootResolutionException rre) {
+      throw new ActionExecutionFunctionException(
+          new ActionExecutionException("Failed to get cached inputs", rre, action, true));
+    }
     if (actionCacheInputs == null) {
       Preconditions.checkState(env.valuesMissing(), action);
       return null;
     }
-    return new AllInputs(action.getInputs(), actionCacheInputs, resolver.keysRequested);
+    return new AllInputs(allKnownInputs, actionCacheInputs, resolver.keysRequested);
   }
 
   private static class AllInputs {
@@ -233,29 +245,38 @@ public class ActionExecutionFunction implements SkyFunction, CompletionReceiver 
     }
 
     @Override
-    public Map<PathFragment, Root> findPackageRoots(Iterable<PathFragment> execPaths) {
+    public Map<PathFragment, Root> findPackageRoots(Iterable<PathFragment> execPaths)
+        throws PackageRootResolutionException {
       Preconditions.checkState(keysRequested.isEmpty(),
           "resolver should only be called once: %s %s", keysRequested, execPaths);
-      Map<PathFragment, SkyKey> depKeys = new HashMap<>();
       // Create SkyKeys list based on execPaths.
+      Map<PathFragment, SkyKey> depKeys = new HashMap<>();
       for (PathFragment path : execPaths) {
         SkyKey depKey =
             ContainingPackageLookupValue.key(PackageIdentifier.createInDefaultRepo(path));
         depKeys.put(path, depKey);
         keysRequested.add(depKey);
       }
-      Map<SkyKey, SkyValue> values = env.getValues(depKeys.values());
+
+      Map<SkyKey,
+          ValueOrException2<NoSuchPackageException, InconsistentFilesystemException>> values =
+              env.getValuesOrThrow(depKeys.values(), NoSuchPackageException.class,
+                  InconsistentFilesystemException.class);
       if (env.valuesMissing()) {
         // Some values are not computed yet.
         return null;
       }
+
       Map<PathFragment, Root> result = new HashMap<>();
       for (PathFragment path : execPaths) {
-        // TODO(bazel-team): Add check for errors here, when loading phase will be removed.
-        // For now all possible errors that ContainingPackageLookupFunction can generate
-        // are caught in previous phases.
-        ContainingPackageLookupValue value =
-            (ContainingPackageLookupValue) values.get(depKeys.get(path));
+        ContainingPackageLookupValue value;
+        try {
+          value = (ContainingPackageLookupValue) values.get(depKeys.get(path)).get();
+        } catch (NoSuchPackageException | InconsistentFilesystemException e) {
+          throw new PackageRootResolutionException("Could not determine containing package for "
+              + path, e);
+        }
+
         if (value.hasContainingPackage()) {
           // We have found corresponding root for current execPath.
           result.put(path, Root.asSourceRoot(value.getContainingPackageRoot()));
@@ -296,16 +317,19 @@ public class ActionExecutionFunction implements SkyFunction, CompletionReceiver 
 
     // This may be recreated if we discover inputs.
     PerActionFileCache perActionFileCache = new PerActionFileCache(state.inputArtifactData);
-    ActionExecutionContext actionExecutionContext =
-        skyframeActionExecutor.constructActionExecutionContext(perActionFileCache,
-            metadataHandler, state.expandedMiddlemen);
+    ActionExecutionContext actionExecutionContext = null;
     boolean inputsDiscoveredDuringActionExecution = false;
     Map<Artifact, FileArtifactValue> metadataFoundDuringActionExecution = null;
     try {
       if (action.discoversInputs()) {
         if (!state.hasDiscoveredInputs()) {
-          state.discoveredInputs =
-              skyframeActionExecutor.discoverInputs(action, actionExecutionContext);
+          try {
+            state.discoveredInputs = skyframeActionExecutor.discoverInputs(action,
+                perActionFileCache, metadataHandler, env);
+          } catch (MissingDepException e) {
+            Preconditions.checkState(env.valuesMissing(), action);
+            return null;
+          }
           if (state.discoveredInputs == null) {
             // Action had nothing to tell us about discovered inputs before execution. We'll have to
             // add them afterwards.
@@ -325,20 +349,22 @@ public class ActionExecutionFunction implements SkyFunction, CompletionReceiver 
           perActionFileCache = new PerActionFileCache(state.inputArtifactData);
           metadataHandler =
               new ActionMetadataHandler(state.inputArtifactData, action.getOutputs(), tsgm);
-          actionExecutionContext =
-              skyframeActionExecutor.constructActionExecutionContext(perActionFileCache,
-                  metadataHandler, state.expandedMiddlemen);
         }
       }
+      actionExecutionContext =
+          skyframeActionExecutor.constructActionExecutionContext(perActionFileCache,
+              metadataHandler, state.expandedMiddlemen);
       if (!state.hasExecutedAction()) {
         state.value = skyframeActionExecutor.executeAction(action,
             metadataHandler, actionStartTime, actionExecutionContext);
       }
     } finally {
-      try {
-        actionExecutionContext.getFileOutErr().close();
-      } catch (IOException e) {
-        // Nothing we can do here.
+      if (actionExecutionContext != null) {
+        try {
+          actionExecutionContext.getFileOutErr().close();
+        } catch (IOException e) {
+          // Nothing we can do here.
+        }
       }
       if (inputsDiscoveredDuringActionExecution) {
         metadataFoundDuringActionExecution =
@@ -522,6 +548,12 @@ public class ActionExecutionFunction implements SkyFunction, CompletionReceiver 
   public String extractTag(SkyKey skyKey) {
     return null;
   }
+
+  /**
+   * Exception to be thrown if an action is missing Skyframe dependencies that it finds are missing
+   * during execution/input discovery.
+   */
+  public static class MissingDepException extends RuntimeException {}
 
   /**
    * Should be called once execution is over, and the intra-build cache of in-progress computations

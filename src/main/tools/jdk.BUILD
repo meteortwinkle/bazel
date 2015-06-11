@@ -20,6 +20,16 @@ filegroup(
     srcs = ["bin/java"],
 )
 
+filegroup(
+    name = "jar",
+    srcs = ["bin/jar"],
+)
+
+filegroup(
+    name = "javac",
+    srcs = ["bin/javac"],
+)
+
 BOOTCLASS_JARS = [
     "rt.jar",
     "resources.jar",
@@ -31,6 +41,11 @@ BOOTCLASS_JARS = [
 filegroup(
     name = "bootclasspath",
     srcs = ["jre/lib/%s" % jar for jar in BOOTCLASS_JARS],
+)
+
+filegroup(
+    name = "extdir",
+    srcs = glob(["jre/lib/ext/*.jar"]),
 )
 
 filegroup(

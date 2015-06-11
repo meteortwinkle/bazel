@@ -166,17 +166,6 @@ public class BuildView {
         + "Reduces memory usage by ~10%, but makes further incremental builds slower.")
     public boolean discardAnalysisCache;
 
-    @Option(name = "keep_forward_graph",
-            deprecationWarning = "keep_forward_graph is now a no-op and will be removed in an "
-            + "upcoming Blaze release",
-            defaultValue = "false",
-            category = "undocumented",
-            help = "Cache the forward action graph across builds for faster "
-            + "incremental rebuilds. May slightly increase memory while Blaze "
-            + "server is idle."
-               )
-    public boolean keepForwardGraph;
-
     @Option(name = "experimental_extra_action_filter",
             defaultValue = "",
             category = "experimental",
@@ -928,6 +917,24 @@ public class BuildView {
             .setPrerequisites(getPrerequisiteMapForTesting(target))
             .setConfigConditions(ImmutableSet.<ConfigMatchingProvider>of())
             .build();
+  }
+
+  /**
+   * For a configured target dependentTarget, returns the desired configured target
+   * that is depended upon. Useful for obtaining the a target with aspects
+   * required by the dependent.
+   */
+  @VisibleForTesting
+  public ConfiguredTarget getPrerequisiteConfiguredTargetForTesting(
+      ConfiguredTarget dependentTarget, ConfiguredTarget desiredTarget) {
+    Collection<ConfiguredTarget> configuredTargets =
+        getPrerequisiteMapForTesting(dependentTarget).values();
+    for (ConfiguredTarget ct : configuredTargets) {
+      if (ct.getLabel().equals(desiredTarget.getLabel())) {
+        return ct;
+      }
+    }
+    return null;
   }
 
   /**

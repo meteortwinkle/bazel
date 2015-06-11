@@ -21,6 +21,7 @@ package blaze_query;
 
 
 option java_package = "com.google.devtools.build.lib.query2.proto.proto2api";
+option java_generate_equals_and_hash = true;
 
 message License {
   repeated string license_type = 1;
@@ -33,6 +34,11 @@ message StringDictEntry {
 }
 
 message StringDictUnaryEntry {
+  required string key = 1;
+  required string value = 2;
+}
+
+message LabelDictUnaryEntry {
   required string key = 1;
   required string value = 2;
 }
@@ -111,6 +117,7 @@ message Attribute {
     INTEGER_LIST = 16;       // int_list_value
     STRING_DICT_UNARY = 17;  // string_dict_unary_value
     UNKNOWN = 18;            // unknown type, use only for build extensions
+    LABEL_DICT_UNARY = 19;   // label_dict_unary_value
   }
 
   // Values for the TriState field type.
@@ -185,6 +192,9 @@ message Attribute {
 
   // If this is a string dict unary, each entry will be stored here.
   repeated StringDictUnaryEntry string_dict_unary_value = 18;
+
+  // If this is a label dict unary, each entry will be stored here.
+  repeated LabelDictUnaryEntry label_dict_unary_value = 19;
 }
 
 // A rule from a BUILD file (e.g., cc_library, java_binary).  The rule class
@@ -342,6 +352,19 @@ message Target {
 
   // An environment group.
   optional EnvironmentGroup environment_group = 6;
+}
+
+// Used to represent a series of Targets as a series of messages. Preferred
+// over repeated fields when the number of targets being serialized may result
+// in creating a serialized protocol buffer that is larger than the default
+// protocol buffer deserialization limit.
+message TargetOrTerminator {
+  // Is this the last message in the series?
+  optional bool is_terminator = 1 [default = false];
+
+  // The Target encoded in this element. Should be set iff is_terminator is
+  // false.
+  optional Target target = 2;
 }
 
 // Container for all of the blaze query results.

@@ -15,6 +15,7 @@ package com.google.devtools.build.lib.analysis.config;
 
 import static com.google.common.truth.Truth.assertThat;
 
+import com.google.common.collect.ImmutableSet;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration.Fragment;
 import com.google.devtools.build.lib.analysis.util.ConfigurationTestCase;
 import com.google.devtools.build.lib.packages.Attribute.ConfigurationTransition;
@@ -144,7 +145,7 @@ public class BuildConfigurationTest extends ConfigurationTestCase {
     }
 
     BuildConfigurationCollection master = createCollection(
-        "--multi_cpu=k8", "--multi_cpu=piii", "--ignore_java_and_python_cpu");
+        "--multi_cpu=k8", "--multi_cpu=piii", "--ignore_java_cpu");
     assertThat(master.getTargetConfigurations()).hasSize(2);
     // Note: the cpus are sorted alphabetically.
     assertEquals("k8", master.getTargetConfigurations().get(0).getCpu());
@@ -164,10 +165,10 @@ public class BuildConfigurationTest extends ConfigurationTestCase {
       BuildConfigurationCollection master;
       if (order == 0) {
         master = createCollection(
-            "--multi_cpu=k8", "--multi_cpu=piii", "--ignore_java_and_python_cpu");
+            "--multi_cpu=k8", "--multi_cpu=piii", "--ignore_java_cpu");
       } else {
         master = createCollection(
-            "--multi_cpu=piii", "--multi_cpu=k8", "--ignore_java_and_python_cpu");
+            "--multi_cpu=piii", "--multi_cpu=k8", "--ignore_java_cpu");
       }
       assertThat(master.getTargetConfigurations()).hasSize(2);
       assertEquals("k8", master.getTargetConfigurations().get(0).getCpu());
@@ -197,6 +198,11 @@ public class BuildConfigurationTest extends ConfigurationTestCase {
       @Override
       public Class<? extends Fragment> creates() {
         return creates;
+      }
+
+      @Override
+      public ImmutableSet<Class<? extends FragmentOptions>> requiredOptions() {
+        return ImmutableSet.of();
       }
 
       @Override

@@ -470,6 +470,8 @@ public final class RuleClass {
               name);
           attributes.put(attrName, attribute);
         }
+
+        advertisedProviders.addAll(parent.getAdvertisedProviders());
       }
       // TODO(bazel-team): move this testonly attribute setting to somewhere else
       // preferably to some base RuleClass implementation.
@@ -754,6 +756,8 @@ public final class RuleClass {
     public <TYPE> Builder exemptFromConstraintChecking(String reason) {
       Preconditions.checkState(this.supportsConstraintChecking);
       this.supportsConstraintChecking = false;
+      attributes.remove(RuleClass.COMPATIBLE_ENVIRONMENT_ATTR);
+      attributes.remove(RuleClass.RESTRICTED_ENVIRONMENT_ATTR);
       return this;
     }
 

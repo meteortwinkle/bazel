@@ -45,15 +45,15 @@ EOF
 }
 
 case "${PLATFORM}" in
-    darwin)
+  darwin)
     function nc_l() {
-          nc -l $1
-          }
+      nc -l $1
+    }
     ;;
-    *)
+  *)
     function nc_l() {
-          nc -l -p $1 -q 1
-          }
+      nc -l -p $1 -q 1
+    }
     ;;
 esac
 
@@ -98,6 +98,8 @@ EOF
   ${bazel_javabase}/bin/jar cf $test_jar carnivore/Mongoose.class
 
   sha256=$(sha256sum $test_jar | cut -f 1 -d ' ')
+  # OS X doesn't have sha1sum, so use openssl.
+  sha1=$(openssl sha1 $test_jar | cut -f 2 -d ' ')
   serve_file $test_jar
   cd ${WORKSPACE_DIR}
 }
@@ -152,14 +154,13 @@ EOF
   cat > WORKSPACE <<EOF
 http_archive(name = 'endangered', url = 'http://localhost:$nc_port/repo.zip',
     sha256 = '$sha256')
-bind(name = 'stud', actual = '@endangered//fox')
 EOF
 
   cat > zoo/BUILD <<EOF
 sh_binary(
     name = "breeding-program",
     srcs = ["female.sh"],
-    data = ["//external:stud"],
+    data = ["@endangered//fox"],
 )
 EOF
 
@@ -169,6 +170,7 @@ cat external/endangered/fox/male
 EOF
   chmod +x zoo/female.sh
 
+  bazel fetch //zoo:breeding-program || fail "Fetch failed"
   bazel run //zoo:breeding-program >& $TEST_log \
     || echo "Expected build/run to succeed"
   kill_nc
@@ -180,14 +182,13 @@ function test_http_archive_no_server() {
   cat > WORKSPACE <<EOF
 http_archive(name = 'endangered', url = 'http://localhost:$nc_port/repo.zip',
     sha256 = 'dummy')
-bind(name = 'stud', actual = '@endangered//fox')
 EOF
 
   cat > zoo/BUILD <<EOF
 sh_binary(
     name = "breeding-program",
     srcs = ["female.sh"],
-    data = ["//external:stud"],
+    data = ["@endangered//fox"],
 )
 EOF
 
@@ -197,8 +198,7 @@ cat fox/male
 EOF
   chmod +x zoo/female.sh
 
-  bazel run //zoo:breeding-program >& $TEST_log && echo "Expected build to fail"
-  cat $TEST_log
+  bazel fetch //zoo:breeding-program >& $TEST_log && fail "Expected fetch to fail"
   expect_log "Connection refused"
 }
 
@@ -218,14 +218,13 @@ function test_http_archive_mismatched_sha256() {
   cat > WORKSPACE <<EOF
 http_archive(name = 'endangered', url = 'http://localhost:$nc_port/repo.zip',
     sha256 = '$wrong_sha256')
-bind(name = 'stud', actual = '@endangered//fox')
 EOF
 
   cat > zoo/BUILD <<EOF
 sh_binary(
     name = "breeding-program",
     srcs = ["female.sh"],
-    data = ["//external:stud"],
+    data = ["@endangered//fox"],
 )
 EOF
 
@@ -235,7 +234,7 @@ cat fox/male
 EOF
   chmod +x zoo/female.sh
 
-  bazel run //zoo:breeding-program >& $TEST_log && echo "Expected build to fail"
+  bazel fetch //zoo:breeding-program >& $TEST_log && echo "Expected fetch to fail"
   kill_nc
   expect_log "does not match expected SHA-256"
 }
@@ -262,6 +261,7 @@ EOF
   nc_l $nc_port < $http_response >& $nc_log &
   pid=$!
 
+  bazel fetch //zoo:breeding-program || fail "Fetch failed"
   bazel run //zoo:breeding-program >& $TEST_log \
     || echo "Expected run to succeed"
   kill_nc
@@ -275,7 +275,6 @@ function test_jar_download() {
   cat > WORKSPACE <<EOF
 http_jar(name = 'endangered', url = 'http://localhost:$nc_port/lib.jar',
     sha256 = '$sha256')
-bind(name = 'mongoose', actual = '@endangered//jar')
 EOF
 
   mkdir -p zoo
@@ -284,7 +283,7 @@ java_binary(
     name = "ball-pit",
     srcs = ["BallPit.java"],
     main_class = "BallPit",
-    deps = ["//external:mongoose"],
+    deps = ["@endangered//jar"],
 )
 EOF
 
@@ -298,6 +297,7 @@ public class BallPit {
 }
 EOF
 
+  bazel fetch //zoo:ball-pit || fail "Fetch failed"
   bazel run //zoo:ball-pit >& $TEST_log || echo "Expected run to succeed"
   kill_nc
   expect_log "Tra-la!"
@@ -309,7 +309,7 @@ function test_invalid_rule() {
 http_jar(name = 'endangered', sha256 = 'dummy')
 EOF
 
-  bazel run //external:endangered >& $TEST_log && echo "Expected run to fail"
+  bazel fetch //external:endangered >& $TEST_log && fail "Expected fetch to fail"
   expect_log "missing value for mandatory attribute 'url' in 'http_jar' rule"
 }
 
@@ -322,12 +322,36 @@ maven_jar(
     group_id = "com.example.carnivore",
     artifact_id = "carnivore",
     version = "1.23",
-    repositories = ['http://localhost:$nc_port/']
+    repository = 'http://localhost:$nc_port/',
+    sha1 = '$sha1',
 )
 bind(name = 'mongoose', actual = '@endangered//jar')
 EOF
 
-  bazel run //zoo:ball-pit >& $TEST_log || echo "Expected run to succeed"
+  bazel fetch //zoo:ball-pit || fail "Fetch failed"
+  bazel run //zoo:ball-pit >& $TEST_log || fail "Expected run to succeed"
+  kill_nc
+  assert_contains "GET /com/example/carnivore/carnivore/1.23/carnivore-1.23.jar" $nc_log
+  expect_log "Tra-la!"
+}
+
+# Same as test_maven_jar, except omit sha1 implying "we don't care".
+function test_maven_jar_no_sha1() {
+  serve_jar
+
+  cat > WORKSPACE <<EOF
+maven_jar(
+    name = 'endangered',
+    group_id = "com.example.carnivore",
+    artifact_id = "carnivore",
+    version = "1.23",
+    repository = 'http://localhost:$nc_port/',
+)
+bind(name = 'mongoose', actual = '@endangered//jar')
+EOF
+
+  bazel fetch //zoo:ball-pit || fail "Fetch failed"
+  bazel run //zoo:ball-pit >& $TEST_log || fail "Expected run to succeed"
   kill_nc
   assert_contains "GET /com/example/carnivore/carnivore/1.23/carnivore-1.23.jar" $nc_log
   expect_log "Tra-la!"
@@ -342,21 +366,40 @@ EOF
   nc_port=$(pick_random_unused_tcp_port) || exit 1
   nc_l $nc_port < $http_response &
   nc_pid=$!
-
   cat > WORKSPACE <<EOF
 maven_jar(
     name = 'endangered',
     group_id = "carnivore",
     artifact_id = "carnivore",
     version = "1.23",
-    repositories = ['http://localhost:$nc_port/']
+    repository = 'http://localhost:$nc_port/',
 )
 bind(name = 'mongoose', actual = '@endangered//jar')
 EOF
 
-  bazel run //zoo:ball-pit >& $TEST_log && echo "Expected run to fail"
+  bazel fetch //zoo:ball-pit >& $TEST_log && echo "Expected fetch to fail"
   kill_nc
   expect_log "Failed to fetch Maven dependency: Could not find artifact"
+}
+
+function test_maven_jar_mismatched_sha1() {
+  serve_jar
+
+  cat > WORKSPACE <<EOF
+maven_jar(
+    name = 'endangered',
+    group_id = "com.example.carnivore",
+    artifact_id = "carnivore",
+    version = "1.23",
+    repository = 'http://localhost:$nc_port/',
+    sha1 = '$sha256',
+)
+bind(name = 'mongoose', actual = '@endangered//jar')
+EOF
+
+  bazel fetch //zoo:ball-pit >& $TEST_log && echo "Expected fetch to fail"
+  kill_nc
+  expect_log "has SHA-1 of $sha1, does not match expected SHA-1 ($sha256)"
 }
 
 function test_new_remote_repo() {
@@ -408,6 +451,7 @@ EOF
   chmod +x zoo/female.sh
 
   bazel clean --expunge
+  bazel fetch //zoo:breeding-program || fail "Fetch failed"
   bazel run //zoo:breeding-program >& $TEST_log \
     || echo "Expected build/run to succeed"
   kill_nc
@@ -423,7 +467,8 @@ maven_jar(
     group_id = "com.example.carnivore",
     artifact_id = "carnivore",
     version = "1.23",
-    repositories = ['http://localhost:$nc_port/']
+    repository = 'http://localhost:$nc_port/',
+    sha1 = '$sha1',
 )
 bind(name = 'mongoose', actual = '@endangered//jar')
 EOF
@@ -438,6 +483,16 @@ EOF
   # Rerun fetch while nc isn't serving anything to make sure the fetched result
   # is cached.
   bazel fetch //zoo:ball-pit >& $TEST_log || fail "Incremental fetch failed"
+
+  # Make sure fetch isn't needed after a bazel restart.
+  bazel shutdown
+  bazel build //zoo:ball-pit >& $TEST_log || fail "Fetch shouldn't be required"
+
+  # But it is required after a clean.
+  bazel clean --expunge
+  # TODO(kchodorow): remove the --fetch=false option once that's the default.
+  bazel build --fetch=false //zoo:ball-pit >& $TEST_log && fail "Expected build to fail"
+  expect_log "bazel fetch //..."
 }
 
 run_suite "external tests"

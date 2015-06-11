@@ -28,6 +28,7 @@ import com.google.common.collect.Maps;
 import com.google.common.collect.Multimap;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.actions.ArtifactFactory;
+import com.google.devtools.build.lib.actions.PackageRootResolutionException;
 import com.google.devtools.build.lib.actions.PackageRootResolver;
 import com.google.devtools.build.lib.actions.Root;
 import com.google.devtools.build.lib.analysis.ViewCreationFailedException;
@@ -561,8 +562,7 @@ public class CppConfiguration extends BuildConfiguration.Fragment {
     runtimeSysroot = defaultSysroot;
 
     String sysrootFlag;
-    if (sysroot != null && !sysroot.equals(defaultSysroot)) {
-      // Only specify the --sysroot option if it is different from the built-in one.
+    if (sysroot != null) {
       sysrootFlag = "--sysroot=" + sysroot;
     } else {
       sysrootFlag = null;
@@ -795,6 +795,32 @@ public class CppConfiguration extends BuildConfiguration.Fragment {
             + "      flag: '-x'"
             + "      flag: 'c++'"
             + "      flag: '-E'"
+            + "    }"
+            + "  }"
+            + "}",
+            toolchainBuilder);
+      }
+      if (!features.contains("include_paths")) {
+        TextFormat.merge(""
+            + "feature {"
+            + "  name: 'include_paths'"
+            + "  flag_set {"
+            + "    action: 'preprocess-assemble'"
+            + "    action: 'c-compile'"
+            + "    action: 'c++-compile'"
+            + "    action: 'c++-header-parsing'"
+            + "    action: 'c++-header-preprocessing'"
+            + "    action: 'c++-module-compile'"
+            + "    flag_group {"
+            + "      flag: '-iquote'"
+            + "      flag: '%{quote_include_paths}'"
+            + "    }"
+            + "    flag_group {"
+            + "      flag: '-I%{include_paths}'"
+            + "    }"
+            + "    flag_group {"
+            + "      flag: '-isystem'"
+            + "      flag: '%{system_include_paths}'"
             + "    }"
             + "  }"
             + "}",
@@ -1117,6 +1143,10 @@ public class CppConfiguration extends BuildConfiguration.Fragment {
    * different sysroots, or the sysroot is the same as the default sysroot, then
    * this method returns <code>null</code>.
    */
+  @SkylarkCallable(name = "sysroot", structField = true,
+      doc = "Returns the sysroot to be used. If the toolchain compiler does not support "
+      + "different sysroots, or the sysroot is the same as the default sysroot, then "
+      + "this method returns <code>None</code>.")
   public PathFragment getSysroot() {
     return sysroot;
   }
@@ -1134,8 +1164,13 @@ public class CppConfiguration extends BuildConfiguration.Fragment {
    * Returns the default options to use for compiling C, C++, and assembler.
    * This is just the options that should be used for all three languages.
    * There may be additional C-specific or C++-specific options that should be used,
-   * in addition to the ones returned by this method;
+   * in addition to the ones returned by this method.
    */
+  @SkylarkCallable(name = "compiler_options",
+      doc = "Returns the default options to use for compiling C, C++, and assembler. "
+      + "This is just the options that should be used for all three languages. "
+      + "There may be additional C-specific or C++-specific options that should be used, "
+      + "in addition to the ones returned by this method")
   public List<String> getCompilerOptions(Collection<String> features) {
     return compilerFlags.evaluate(features);
   }
@@ -1145,6 +1180,10 @@ public class CppConfiguration extends BuildConfiguration.Fragment {
    * C. These should be go on the command line after the common options
    * returned by {@link #getCompilerOptions}.
    */
+  @SkylarkCallable(name = "c_options", structField = true,
+      doc = "Returns the list of additional C-specific options to use for compiling C. "
+      + "These should be go on the command line after the common options returned by "
+      + "<code>compiler_options</code>")
   public List<String> getCOptions() {
     return cOptions;
   }
@@ -1154,6 +1193,10 @@ public class CppConfiguration extends BuildConfiguration.Fragment {
    * C++. These should be go on the command line after the common options
    * returned by {@link #getCompilerOptions}.
    */
+  @SkylarkCallable(name = "cxx_options",
+      doc = "Returns the list of additional C++-specific options to use for compiling C++. "
+      + "These should be go on the command line after the common options returned by "
+      + "<code>compiler_options</code>")
   public List<String> getCxxOptions(Collection<String> features) {
     return cxxFlags.evaluate(features);
   }
@@ -1162,6 +1205,9 @@ public class CppConfiguration extends BuildConfiguration.Fragment {
    * Returns the default list of options which cannot be filtered by BUILD
    * rules. These should be appended to the command line after filtering.
    */
+  @SkylarkCallable(name = "unfiltered_compiler_options",
+      doc = "Returns the default list of options which cannot be filtered by BUILD "
+      + "rules. These should be appended to the command line after filtering.")
   public List<String> getUnfilteredCompilerOptions(Collection<String> features) {
     return unfilteredCompilerFlags.evaluate(features);
   }
@@ -1173,6 +1219,9 @@ public class CppConfiguration extends BuildConfiguration.Fragment {
    * @see Link
    */
   // TODO(bazel-team): Clean up the linker options computation!
+  @SkylarkCallable(name = "link_options", structField = true,
+      doc = "Returns the set of command-line linker options, including any flags "
+      + "inferred from the command-line options.")
   public List<String> getLinkOptions() {
     return linkOptions;
   }
@@ -1621,6 +1670,8 @@ public class CppConfiguration extends BuildConfiguration.Fragment {
   /**
    * Returns the GNU System Name
    */
+  @SkylarkCallable(name = "target_gnu_system_name", structField = true,
+      doc = "The GNU System Name.")
   public String getTargetGnuSystemName() {
     return targetSystemName;
   }
@@ -1745,8 +1796,14 @@ public class CppConfiguration extends BuildConfiguration.Fragment {
     // TODO(bazel-team): Remove the "relative" guard. sysroot should always be relative, and this
     // should be enforced in the creation of CppConfiguration.
     if (getSysroot() != null && !getSysroot().isAbsolute()) {
-      Root sysrootRoot = Iterables.getOnlyElement(
+      Root sysrootRoot;
+      try {
+        sysrootRoot = Iterables.getOnlyElement(
           resolver.findPackageRoots(ImmutableList.of(getSysroot())).entrySet()).getValue();
+      } catch (PackageRootResolutionException prre) {
+        throw new ViewCreationFailedException("Failed to determine sysroot", prre);
+      }
+
       PathFragment sysrootExecPath = sysroot.getRelative(BUILT_IN_INCLUDE_PATH_FRAGMENT);
       if (sysrootRoot.getPath().getRelative(sysrootExecPath).exists()) {
         builtInIncludeFile = Preconditions.checkNotNull(
@@ -1758,7 +1815,7 @@ public class CppConfiguration extends BuildConfiguration.Fragment {
       getFdoSupport().prepareToBuild(execRoot, genfilesPath, artifactFactory, resolver);
     } catch (ZipException e) {
       throw new ViewCreationFailedException("Error reading provided FDO zip file", e);
-    } catch (FdoException | IOException e) {
+    } catch (FdoException | IOException | PackageRootResolutionException e) {
       throw new ViewCreationFailedException("Error while initializing FDO support", e);
     }
   }
@@ -1855,8 +1912,11 @@ public class CppConfiguration extends BuildConfiguration.Fragment {
 
   @Override
   public Map<String, Object> lateBoundOptionDefaults() {
-    // --cpu defaults to null. With that default, the actual target cpu string gets picked up
-    // by the "default_target_cpu" crosstool parameter.
-    return ImmutableMap.<String, Object>of("cpu", getTargetCpu());
+    // --cpu and --compiler initially default to null because their *actual* defaults aren't known
+    // until they're read from the CROSSTOOL. Feed the CROSSTOOL defaults in here.
+    return ImmutableMap.<String, Object>of(
+        "cpu", getTargetCpu(),
+        "compiler", getCompiler()
+    );
   }
 }

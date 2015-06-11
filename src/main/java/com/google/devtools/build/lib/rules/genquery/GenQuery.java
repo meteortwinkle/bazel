@@ -281,7 +281,8 @@ public class GenQuery implements RuleConfiguredTargetFactory {
     PrintStream printStream = new PrintStream(outputStream);
 
     try {
-      QueryOutputUtils.output(queryOptions, queryResult, formatter, printStream);
+      QueryOutputUtils.output(queryOptions, queryResult, formatter, printStream,
+          queryOptions.aspectDeps.createResolver(packageProvider, getEventHandler(ruleContext)));
     } catch (ClosedByInterruptException e) {
       throw new InterruptedException(e.getMessage());
     } catch (IOException e) {
@@ -398,7 +399,7 @@ public class GenQuery implements RuleConfiguredTargetFactory {
       if (type == TargetPattern.Type.PATH_AS_TARGET) {
         throw new TargetParsingException(
             String.format("couldn't determine target from filename '%s'", pattern));
-      } else if (type == TargetPattern.Type.TARGETS_BELOW_PACKAGE) {
+      } else if (type == TargetPattern.Type.TARGETS_BELOW_DIRECTORY) {
         throw new TargetParsingException(
             String.format("recursive target patterns are not permitted: '%s''", pattern));
       }

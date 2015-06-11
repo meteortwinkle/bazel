@@ -77,23 +77,25 @@ various other fully supported features. In particular, the following
 features/capabilities will be available:
 
 *   Binary versions of Bazel for Linux and OS X
-*   All Bazel tests currently in Google's repository are ported to GitHub
 *   The Bazel test suite runs on externally-visible continuous integration
     infrastructure
 *   Support for referencing transitive sources via Maven
 *   Support for prefetching and caching remote dependencies
 *   Support for building and testing Android apps
 *   Support for testing iOS apps
-*   Support for build action sandboxing
+*   Support for building and deploying Docker images
 
 ## Tentative post-beta plans
 
 *   Binary releases of Bazel at least monthly
+*   Full support for build action sandboxing
+*   Support for distributed caching of build artifacts
+*   All Bazel tests currently in Google's repository are ported to GitHub
 *   The external repository is primary
-*   An auto-update mechanism to allow Bazel to dynamically check for, fetch,
-    and install updated releases, rules, etc.
-*   AppEngine support
-*   Support for remote mobile testing
+*   Support for building and deploying AppEngine applications
+*   Support for testing mobile applications with
+    [Cloud Test Lab](https://developers.google.com/cloud-test-lab/).
 *   Support for the Go language
 *   Support for Javascript
 *   Android Studio interoperability
+

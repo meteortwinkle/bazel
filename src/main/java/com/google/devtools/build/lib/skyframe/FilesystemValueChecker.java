@@ -232,7 +232,7 @@ class FilesystemValueChecker {
   }
 
   private void updateIntraBuildModifiedCounter(long time, boolean oldWasSymlink,
-      boolean newIsSymlink) throws IOException {
+      boolean newIsSymlink) {
     if (lastExecutionTimeRange != null
         && lastExecutionTimeRange.contains(time)
         && !(oldWasSymlink && newIsSymlink)) {
@@ -308,15 +308,11 @@ class FilesystemValueChecker {
       executor.execute(wrapper.wrap(new Runnable() {
         @Override
         public void run() {
-          if (value == null) {
-            // value will be null if the value is in error or part of a cycle.
-            // TODO(bazel-team): This is overly conservative.
-            batchResult.add(key, /*newValue=*/null);
-            return;
-          }
-          DirtyResult result = checker.check(key, value, tsgm);
-          if (result.isDirty()) {
-            batchResult.add(key, result.getNewValue());
+          if (value != null) {
+            DirtyResult result = checker.check(key, value, tsgm);
+            if (result.isDirty()) {
+              batchResult.add(key, result.getNewValue());
+            }
           }
         }
       }));

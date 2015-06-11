@@ -26,6 +26,7 @@ source "${TEST_SRCDIR}/src/test/shell/unittest.bash" || \
 # Bazel
 bazel_tree="${TEST_SRCDIR}/src/test/shell/bazel/doc-srcs.zip"
 bazel_path="${TEST_SRCDIR}/src"
+bazel_data="${TEST_SRCDIR}"
 
 # Java
 jdk_dir="${TEST_SRCDIR}/external/local-jdk"
@@ -42,23 +43,35 @@ ijar_path="${TEST_SRCDIR}/third_party/ijar/ijar"
 PLATFORM="$(uname -s | tr 'A-Z' 'a-z')"
 case "${PLATFORM}" in
   darwin)
-    protoc_compiler="${TEST_SRCDIR}/third_party/protobuf/protoc.darwin"
+    protoc_compiler="${TEST_SRCDIR}/third_party/protobuf/protoc-osx-x86_32.exe"
     ;;
   *)
-    protoc_compiler="${TEST_SRCDIR}/third_party/protobuf/protoc.amd64"
+    protoc_compiler="${TEST_SRCDIR}/third_party/protobuf/protoc-linux-x86_32.exe"
     ;;
 esac
 protoc_jar="${TEST_SRCDIR}/third_party/protobuf/protobuf-*.jar"
 junit_jar="${TEST_SRCDIR}/third_party/junit/junit-*.jar"
 hamcrest_jar="${TEST_SRCDIR}/third_party/hamcrest/hamcrest-*.jar"
 
-# This function copy the tools directory from Blaze.
+# This function copies the tools directory from Bazel.
 function copy_tools_directory() {
   cp -R ${tools_dir}/* tools
 
   chmod -R +w .
   mkdir -p tools/defaults
   touch tools/defaults/BUILD
+}
+
+# Report whether a given directory name corresponds to a tools directory.
+function is_tools_directory() {
+  case "$1" in
+    tools)
+      true
+      ;;
+    *)
+      false
+      ;;
+  esac
 }
 
 # Copy the examples of the base workspace

@@ -109,11 +109,11 @@ public final class AspectDefinition {
    */
   public static ImmutableMultimap<Attribute, Label> visitAspectsIfRequired(
       Target from, Attribute attribute, Target to) {
-    ImmutableMultimap.Builder<Attribute, Label> labelBuilder = ImmutableMultimap.builder();
     // Aspect can be declared only for Rules.
     if (!(from instanceof Rule) || !(to instanceof Rule)) {
-      return labelBuilder.build();
+      return ImmutableMultimap.of();
     }
+    LinkedHashMultimap<Attribute, Label> result = LinkedHashMultimap.create();
     RuleClass ruleClass = ((Rule) to).getRuleClassObject();
     for (Class<? extends AspectFactory<?, ?, ?>> candidateClass : attribute.getAspects()) {
       AspectFactory<?, ?, ?> candidate = AspectFactory.Util.create(candidateClass);
@@ -123,16 +123,16 @@ public final class AspectDefinition {
           candidate.getDefinition().getRequiredProviders())) {
         continue;
       }
-      addAllAttributesOfAspect((Rule) from, labelBuilder, candidate.getDefinition(), Rule.ALL_DEPS);
+      addAllAttributesOfAspect((Rule) from, result, candidate.getDefinition(), Rule.ALL_DEPS);
     }
-    return labelBuilder.build();
+    return ImmutableMultimap.copyOf(result);
   }
 
   /**
    * Collects all attribute labels from the specified aspectDefinition.
    */
   public static void addAllAttributesOfAspect(Rule from,
-      ImmutableMultimap.Builder<Attribute, Label> labelBuilder, AspectDefinition aspectDefinition,
+      Multimap<Attribute, Label> labelBuilder, AspectDefinition aspectDefinition,
       BinaryPredicate<Rule, Attribute> predicate) {
     ImmutableMap<String, Attribute> attributes = aspectDefinition.getAttributes();
     for (Attribute aspectAttribute : attributes.values()) {
@@ -174,17 +174,19 @@ public final class AspectDefinition {
     }
 
     /**
-     * Tells that in order for this aspect to work, the given aspect must be computed for the
-     * direct dependencies in the attribute with the specified name on the associated configured
-     * target.
+     * Declares that this aspect depends on the given aspects in {@code aspectFactories} provided
+     * by direct dependencies through attribute {@code attribute} on the target associated with this
+     * aspect.
      *
      * <p>Note that {@code AspectFactory} instances are expected in the second argument, but we
      * cannot reference that interface here.
      */
     public Builder attributeAspect(
-        String attribute, Class<? extends AspectFactory<?, ?, ?>> aspectFactory) {
-      this.attributeAspects.put(
-          Preconditions.checkNotNull(attribute), Preconditions.checkNotNull(aspectFactory));
+        String attribute, Class<? extends AspectFactory<?, ?, ?>>... aspectFactories) {
+      Preconditions.checkNotNull(attribute);
+      for (Class<? extends AspectFactory<?, ?, ?>> aspectFactory : aspectFactories) {
+        this.attributeAspects.put(attribute, Preconditions.checkNotNull(aspectFactory));
+      }
       return this;
     }
 

@@ -15,11 +15,14 @@
 package com.google.devtools.build.lib.rules.objc;
 
 import static com.google.devtools.build.lib.rules.objc.ObjcProvider.ASSET_CATALOG;
+import static com.google.devtools.build.lib.rules.objc.ObjcProvider.BUNDLE_FILE;
 import static com.google.devtools.build.lib.rules.objc.ObjcProvider.STRINGS;
 import static com.google.devtools.build.lib.rules.objc.ObjcProvider.XCASSETS_DIR;
 
 import com.google.common.base.Optional;
 import com.google.common.base.Verify;
+import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Iterables;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.analysis.FilesToRunProvider;
 import com.google.devtools.build.lib.analysis.RuleConfiguredTarget.Mode;
@@ -27,17 +30,19 @@ import com.google.devtools.build.lib.analysis.RuleContext;
 import com.google.devtools.build.lib.analysis.actions.CommandLine;
 import com.google.devtools.build.lib.analysis.actions.CustomCommandLine;
 import com.google.devtools.build.lib.analysis.actions.SpawnAction;
-import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
-import com.google.devtools.build.lib.rules.objc.ObjcActionsBuilder.ExtraActoolArgs;
+import com.google.devtools.build.lib.collect.nestedset.NestedSet;
+import com.google.devtools.build.lib.packages.Type;
+import com.google.devtools.build.lib.rules.objc.TargetDeviceFamily.InvalidFamilyNameException;
+import com.google.devtools.build.lib.rules.objc.TargetDeviceFamily.RepeatedFamilyNameException;
 import com.google.devtools.build.lib.rules.objc.XcodeProvider.Builder;
 import com.google.devtools.build.lib.vfs.FileSystemUtils;
 import com.google.devtools.build.lib.vfs.PathFragment;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Set;
 
 /**
  * Support for generating iOS bundles which contain metadata (a plist file), assets, resources and
@@ -48,80 +53,44 @@ import java.util.Set;
  */
 final class BundleSupport {
 
-  static class ExtraMergePlists extends IterableWrapper<Artifact> {
-    ExtraMergePlists(Artifact... inputs) {
-      super(inputs);
+  /**
+   * Iterable wrapper used to strongly type arguments eventually passed to {@code actool}.
+   */
+  static final class ExtraActoolArgs extends IterableWrapper<String> {
+    ExtraActoolArgs(Iterable<String> args) {
+      super(args);
+    }
+
+    ExtraActoolArgs(String... args) {
+      super(args);
     }
   }
 
   private final RuleContext ruleContext;
-  private final Set<TargetDeviceFamily> targetDeviceFamilies;
   private final ExtraActoolArgs extraActoolArgs;
   private final Bundling bundling;
   private final Attributes attributes;
 
   /**
-   * Returns merging instructions for a bundle's {@code Info.plist}.
-   *
-   * @param ruleContext context this bundle is constructed in
-   * @param objcProvider provider containing all dependencies' information as well as some of this
-   *    rule's
-   * @param optionsProvider provider containing options and plist settings for this rule and its
-   *    dependencies
-   * @param primaryBundleId used to set the bundle identifier or override the existing one from
-   *     plist file, can be null
-   * @param fallbackBundleId used to set the bundle identifier if it is not set by plist file or
-   *     primary identifier, can be null
-   * @param extraMergePlists additional plist files to merge
-   */
-  static InfoplistMerging infoPlistMerging(
-      RuleContext ruleContext,
-      ObjcProvider objcProvider,
-      OptionsProvider optionsProvider,
-      String primaryBundleId,
-      String fallbackBundleId,
-      ExtraMergePlists extraMergePlists) {
-    IntermediateArtifacts intermediateArtifacts =
-        ObjcRuleClasses.intermediateArtifacts(ruleContext);
-
-    return new InfoplistMerging.Builder(ruleContext)
-        .setIntermediateArtifacts(intermediateArtifacts)
-        .setInputPlists(NestedSetBuilder.<Artifact>stableOrder()
-            .addTransitive(optionsProvider.getInfoplists())
-            .addAll(actoolPartialInfoplist(ruleContext, objcProvider).asSet())
-            .addAll(extraMergePlists)
-            .build())
-        .setPlmerge(ruleContext.getExecutablePrerequisite("$plmerge", Mode.HOST))
-        .setBundleIdentifiers(primaryBundleId, fallbackBundleId)
-        .build();
-  }
-
-  /**
    * Creates a new bundle support with no special {@code actool} arguments.
    *
    * @param ruleContext context this bundle is constructed in
-   * @param targetDeviceFamilies device families used in asset catalogue construction and storyboard
-   *     compilation
    * @param bundling bundle information as configured for this rule
    */
-  public BundleSupport(
-      RuleContext ruleContext, Set<TargetDeviceFamily> targetDeviceFamilies, Bundling bundling) {
-    this(ruleContext, targetDeviceFamilies, bundling, new ExtraActoolArgs());
+  public BundleSupport(RuleContext ruleContext, Bundling bundling) {
+    this(ruleContext, bundling, new ExtraActoolArgs());
   }
 
   /**
    * Creates a new bundle support.
    *
    * @param ruleContext context this bundle is constructed in
-   * @param targetDeviceFamilies device families used in asset catalogue construction and storyboard
-   *     compilation
    * @param bundling bundle information as configured for this rule
    * @param extraActoolArgs any additional parameters to be used for invoking {@code actool}
    */
-  public BundleSupport(RuleContext ruleContext, Set<TargetDeviceFamily> targetDeviceFamilies,
+  public BundleSupport(RuleContext ruleContext,
       Bundling bundling, ExtraActoolArgs extraActoolArgs) {
     this.ruleContext = ruleContext;
-    this.targetDeviceFamilies = targetDeviceFamilies;
     this.extraActoolArgs = extraActoolArgs;
     this.bundling = bundling;
     this.attributes = new Attributes(ruleContext);
@@ -151,7 +120,9 @@ final class BundleSupport {
    * @return this bundle support
    */
   BundleSupport addXcodeSettings(Builder xcodeProviderBuilder) {
-    xcodeProviderBuilder.setInfoplistMerging(bundling.getInfoplistMerging());
+    if (bundling.getBundleInfoplist().isPresent()) {
+      xcodeProviderBuilder.setBundleInfoplist(bundling.getBundleInfoplist().get());
+    }
     return this;
   }
 
@@ -163,8 +134,14 @@ final class BundleSupport {
    */
   BundleSupport validateResources(ObjcProvider objcProvider) {
     Map<String, Artifact> bundlePathToFile = new HashMap<>();
-    for (Artifact stringsFile : objcProvider.get(STRINGS)) {
-      String bundlePath = BundleableFile.flatBundlePath(stringsFile.getExecPath());
+    NestedSet<Artifact> artifacts = objcProvider.get(STRINGS);
+
+    Iterable<BundleableFile> bundleFiles =
+        Iterables.concat(
+            objcProvider.get(BUNDLE_FILE), BundleableFile.flattenedRawResourceFiles(artifacts));
+    for (BundleableFile bundleFile : bundleFiles) {
+      String bundlePath = bundleFile.getBundlePath();
+      Artifact bundled = bundleFile.getBundled();
 
       // Normally any two resources mapped to the same path in the bundle are illegal. However, we
       // currently don't have a good solution for resources generated by a genrule in
@@ -175,19 +152,26 @@ final class BundleSupport {
       // related filtering code in Bundling.Builder.build()).
       if (bundlePathToFile.containsKey(bundlePath)) {
         Artifact original = bundlePathToFile.get(bundlePath);
-        if (!Objects.equals(original.getOwner(), stringsFile.getOwner())) {
-          ruleContext.ruleError(String.format(
-              "Two string files map to the same path [%s] in this bundle but come from different "
-                  + "locations: %s and %s",
-              bundlePath, original.getOwner(), stringsFile.getOwner()));
+        if (!Objects.equals(original.getOwner(), bundled.getOwner())) {
+          ruleContext.ruleError(
+              String.format(
+                  "Two files map to the same path [%s] in this bundle but come from different "
+                      + "locations: %s and %s",
+                  bundlePath,
+                  original.getOwner(),
+                  bundled.getOwner()));
         } else {
-          Verify.verify(!original.getRoot().equals(stringsFile.getRoot()),
+          Verify.verify(
+              !original.getRoot().equals(bundled.getRoot()),
               "%s and %s should have different roots but have %s and %s",
-              original, stringsFile, original.getRoot(), stringsFile.getRoot());
+              original,
+              bundleFile,
+              original.getRoot(),
+              bundled.getRoot());
         }
 
       } else {
-        bundlePathToFile.put(bundlePath, stringsFile);
+        bundlePathToFile.put(bundlePath, bundled);
       }
     }
 
@@ -195,6 +179,15 @@ final class BundleSupport {
     // generated by genrules or doubly defined.
 
     return this;
+  }
+
+  /**
+   * Returns a set containing the {@link TargetDeviceFamily} values
+   * which this bundle is targeting. Returns an empty set for any
+   * invalid value of the target device families attribute.
+   */
+  ImmutableSet<TargetDeviceFamily> targetDeviceFamilies() {
+    return attributes.families();
   }
 
   private void registerInterfaceBuilderActions(ObjcProvider objcProvider) {
@@ -205,7 +198,7 @@ final class BundleSupport {
       Artifact zipOutput = intermediateArtifacts.compiledStoryboardZip(storyboardInput);
 
       ruleContext.registerAction(
-          ObjcActionsBuilder.spawnJavaOnDarwinActionBuilder(attributes.ibtoolzipDeployJar())
+          ObjcRuleClasses.spawnJavaOnDarwinActionBuilder(attributes.ibtoolzipDeployJar())
               .setMnemonic("StoryboardCompile")
               .setCommandLine(ibActionsCommandLine(archiveRoot, zipOutput, storyboardInput))
               .addOutput(zipOutput)
@@ -220,10 +213,11 @@ final class BundleSupport {
         // The next three arguments are positional, i.e. they don't have flags before them.
         .addPath(zipOutput.getExecPath())
         .add(archiveRoot)
-        .addPath(ObjcActionsBuilder.IBTOOL)
-        .add("--minimum-deployment-target").add(bundling.getMinimumOsVersion());
+        .addPath(ObjcRuleClasses.IBTOOL)
+        .add("--minimum-deployment-target").add(bundling.getMinimumOsVersion())
+        .add("--module").add(ruleContext.getLabel().getName());
 
-    for (TargetDeviceFamily targetDeviceFamily : targetDeviceFamilies) {
+    for (TargetDeviceFamily targetDeviceFamily : attributes.families()) {
       commandLine.add("--target-device").add(targetDeviceFamily.name().toLowerCase(Locale.US));
     }
 
@@ -241,7 +235,7 @@ final class BundleSupport {
     for (Xcdatamodel datamodel : xcdatamodels) {
       Artifact outputZip = datamodel.getOutputZip();
       ruleContext.registerAction(
-          ObjcActionsBuilder.spawnJavaOnDarwinActionBuilder(attributes.momczipDeployJar())
+          ObjcRuleClasses.spawnJavaOnDarwinActionBuilder(attributes.momczipDeployJar())
               .setMnemonic("MomCompile")
               .addOutput(outputZip)
               .addInputs(datamodel.getInputs())
@@ -269,18 +263,9 @@ final class BundleSupport {
       String archiveRoot = BundleableFile.flatBundlePath(
           FileSystemUtils.replaceExtension(original.getExecPath(), ".nib"));
       ruleContext.registerAction(
-          ObjcActionsBuilder.spawnJavaOnDarwinActionBuilder(attributes.ibtoolzipDeployJar())
+          ObjcRuleClasses.spawnJavaOnDarwinActionBuilder(attributes.ibtoolzipDeployJar())
               .setMnemonic("XibCompile")
-              .setCommandLine(CustomCommandLine.builder()
-                  // The next three arguments are positional,
-                  // i.e. they don't have flags before them.
-                  .addPath(zipOutput.getExecPath())
-                  .add(archiveRoot)
-                  .addPath(ObjcActionsBuilder.IBTOOL)
-
-                  .add("--minimum-deployment-target").add(bundling.getMinimumOsVersion())
-                  .addPath(original.getExecPath())
-                  .build())
+              .setCommandLine(ibActionsCommandLine(archiveRoot, zipOutput, original))
               .addOutput(zipOutput)
               .addInput(original)
               .build(ruleContext));
@@ -305,9 +290,39 @@ final class BundleSupport {
     }
   }
 
+  /**
+   * Creates action to merge multiple Info.plist files of a bundle into a single Info.plist. The
+   * merge action is necessary if there are more than one input plist files or we have a bundle ID
+   * to stamp on the merged plist.
+   */
   private void registerMergeInfoplistAction() {
-    // TODO(bazel-team): Move action implementation from InfoplistMerging to this class.
-    ruleContext.registerAction(bundling.getInfoplistMerging().getMergeAction());
+    if (!bundling.needsToMergeInfoplist()) {
+      return; // Nothing to do here.
+    }
+
+    ruleContext.registerAction(new SpawnAction.Builder()
+        .setMnemonic("MergeInfoPlistFiles")
+        .setExecutable(attributes.plmerge())
+        .setCommandLine(mergeCommandLine())
+        .addInputs(bundling.getBundleInfoplistInputs())
+        .addOutput(ObjcRuleClasses.intermediateArtifacts(ruleContext).mergedInfoplist())
+        .build(ruleContext));
+  }
+
+  private CommandLine mergeCommandLine() {
+    CustomCommandLine.Builder argBuilder = CustomCommandLine.builder()
+        .addBeforeEachExecPath("--source_file", bundling.getBundleInfoplistInputs())
+        .addExecPath(
+            "--out_file", ObjcRuleClasses.intermediateArtifacts(ruleContext).mergedInfoplist());
+
+    if (bundling.getPrimaryBundleId() != null) {
+      argBuilder.add("--primary_bundle_id").add(bundling.getPrimaryBundleId());
+    }
+    if (bundling.getFallbackBundleId() != null) {
+      argBuilder.add("--fallback_bundle_id").add(bundling.getFallbackBundleId());
+    }
+
+    return argBuilder.build();
   }
 
   private void registerActoolActionIfNecessary(ObjcProvider objcProvider) {
@@ -325,7 +340,7 @@ final class BundleSupport {
     // zip file will be rooted at the bundle root, and we have to prepend the bundle root to each
     // entry when merging it with the final .ipa file.
     ruleContext.registerAction(
-        ObjcActionsBuilder.spawnJavaOnDarwinActionBuilder(attributes.actoolzipDeployJar())
+        ObjcRuleClasses.spawnJavaOnDarwinActionBuilder(attributes.actoolzipDeployJar())
             .setMnemonic("AssetCatalogCompile")
             .addTransitiveInputs(objcProvider.get(ASSET_CATALOG))
             .addOutput(zipOutput)
@@ -350,7 +365,7 @@ final class BundleSupport {
         .addExecPath("--output-partial-info-plist", partialInfoPlist)
         .add("--minimum-deployment-target").add(bundling.getMinimumOsVersion());
 
-    for (TargetDeviceFamily targetDeviceFamily : targetDeviceFamilies) {
+    for (TargetDeviceFamily targetDeviceFamily : attributes.families()) {
       commandLine.add("--target-device").add(targetDeviceFamily.name().toLowerCase(Locale.US));
     }
 
@@ -396,6 +411,21 @@ final class BundleSupport {
      */
     FilesToRunProvider plmerge() {
       return ruleContext.getExecutablePrerequisite("$plmerge", Mode.HOST);
+    }
+
+    /**
+     * Returns the value of the {@code families} attribute in a form
+     * that is more useful than a list of strings. Returns an empty
+     * set for any invalid {@code families} attribute value, including
+     * an empty list.
+     */
+    ImmutableSet<TargetDeviceFamily> families() {
+      List<String> rawFamilies = ruleContext.attributes().get("families", Type.STRING_LIST);
+      try {
+        return ImmutableSet.copyOf(TargetDeviceFamily.fromNamesInRule(rawFamilies));
+      } catch (InvalidFamilyNameException | RepeatedFamilyNameException e) {
+        return ImmutableSet.of();
+      }
     }
 
     /**

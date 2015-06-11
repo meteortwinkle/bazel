@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 #
 # Copyright 2015 Google Inc. All rights reserved.
 #
@@ -18,12 +18,16 @@
 #
 
 # Load test environment
-source $(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/shared/test-setup.sh \
+source $(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/test-setup.sh \
   || { echo "test-setup.sh not found!" >&2; exit 1; }
 
 # namespaces which are used by the sandbox were introduced in 3.8, so
 # test won't run on earlier kernels
 function check_kernel_version {
+  if [ "${PLATFORM-}" = "darwin" ]; then
+    echo "Test will skip: sandbox is not yet supported on Darwin."
+    exit 0
+  fi
   MAJOR=$(uname -r | sed 's/^\([0-9]*\)\.\([0-9]*\)\..*/\1/')
   MINOR=$(uname -r | sed 's/^\([0-9]*\)\.\([0-9]*\)\..*/\2/')
   if [ $MAJOR -lt 3 ]; then
@@ -34,6 +38,26 @@ function check_kernel_version {
     echo "Test will skip: sandbox requires kernel >= 3.8; got $(uname -r)"
     exit 0
   fi
+}
+
+# Some CI systems might deactivate sandboxing
+function check_sandbox_allowed {
+  mkdir -p test
+  # Create a program that check if unshare(2) is allowed.
+  cat <<'EOF' > test/test.c
+#define _GNU_SOURCE
+#include <sched.h>
+int main() {
+  return unshare(CLONE_NEWNS | CLONE_NEWUTS | CLONE_NEWIPC | CLONE_NEWUSER);
+}
+EOF
+  cat <<'EOF' >test/BUILD
+cc_test(name = "sandbox_enabled", srcs = ["test.c"], copts = ["-std=c99"])
+EOF
+  bazel test //test:sandbox_enabled || {
+    echo "Sandboxing disabled, skipping..."
+    return false
+  }
 }
 
 function set_up {
@@ -64,6 +88,13 @@ genrule(
     outs = ["tools.txt"],
     cmd = "$(location :tool) $@",
     tools = [":tool"],
+)
+
+genrule(
+   name = "tooldir",
+   srcs = [],
+   outs = ["tooldir.txt"],
+   cmd = "ls -l tools/genrule | tee $@ >&2; cat tools/genrule/genrule-setup.sh >&2",
 )
 
 genrule(
@@ -101,22 +132,35 @@ chmod +x examples/genrule/tool.sh
 }
 
 function test_sandboxed_genrule() {
-  bazel build --genrule_strategy=sandboxed examples/genrule:works \
+  bazel build --genrule_strategy=sandboxed --verbose_failures \
+    examples/genrule:works \
     || fail "Hermetic genrule failed: examples/genrule:works"
   [ -f "${BAZEL_GENFILES_DIR}/examples/genrule/works.txt" ] \
     || fail "Genrule didn't produce output: examples/genrule:works"
 }
 
+function test_sandboxed_tooldir() {
+  bazel build --genrule_strategy=sandboxed --verbose_failures \
+    examples/genrule:tooldir \
+    || fail "Hermetic genrule failed: examples/genrule:tooldir"
+  [ -f "${BAZEL_GENFILES_DIR}/examples/genrule/tooldir.txt" ] \
+    || fail "Genrule didn't produce output: examples/genrule:works"
+  cat "${BAZEL_GENFILES_DIR}/examples/genrule/tooldir.txt" > $TEST_log
+  expect_log "genrule-setup.sh"
+}
+
 function test_sandboxed_genrule_with_tools() {
-  bazel build --genrule_strategy=sandboxed examples/genrule:tools_work \
+  bazel build --genrule_strategy=sandboxed --verbose_failures \
+    examples/genrule:tools_work \
     || fail "Hermetic genrule failed: examples/genrule:tools_work"
   [ -f "${BAZEL_GENFILES_DIR}/examples/genrule/tools.txt" ] \
     || fail "Genrule didn't produce output: examples/genrule:tools_work"
 }
 
 function test_sandbox_undeclared_deps() {
-  bazel build --genrule_strategy=sandboxed examples/genrule:breaks1 \
-    || fail "Non-hermetic genrule succeeded: examples/genrule:breaks1"
+  bazel build --genrule_strategy=sandboxed --verbose_failures \
+    examples/genrule:breaks1 \
+    && fail "Non-hermetic genrule succeeded: examples/genrule:breaks1" || true
   [ ! -f "${BAZEL_GENFILES_DIR}/examples/genrule/breaks1.txt" ] || {
     output=$(cat "${BAZEL_GENFILES_DIR}/examples/genrule/breaks1.txt")
     fail "Non-hermetic genrule breaks1 suceeded with following output: $(output)"
@@ -124,8 +168,9 @@ function test_sandbox_undeclared_deps() {
 }
 
 function test_sandbox_block_filesystem() {
-  bazel build --genrule_strategy=sandboxed examples/genrule:breaks2 \
-    && fail "Non-hermetic genrule succeeded: examples/genrule:breaks2"
+  bazel build --genrule_strategy=sandboxed --verbose_failures \
+    examples/genrule:breaks2 \
+    && fail "Non-hermetic genrule succeeded: examples/genrule:breaks2" || true
   [ ! -f "${BAZEL_GENFILES_DIR}/examples/genrule/breaks2.txt" ] || {
     output=$(cat "${BAZEL_GENFILES_DIR}/examples/genrule/breaks2.txt")
     fail "Non-hermetic genrule suceeded with following output: $(output)"
@@ -133,4 +178,5 @@ function test_sandbox_block_filesystem() {
 }
 
 check_kernel_version
+check_sandbox_allowed || exit 0
 run_suite "sandbox"

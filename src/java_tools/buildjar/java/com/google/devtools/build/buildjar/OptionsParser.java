@@ -51,6 +51,7 @@ public final class OptionsParser {
 
   private String sourceGenDir;
   private String generatedSourcesOutputJar;
+  private String generatedClassOutputJar;
 
   private final List<String> sourceFiles = new ArrayList<>();
   private final List<String> sourceJars = new ArrayList<>();
@@ -60,6 +61,8 @@ public final class OptionsParser {
   private final List<String> rootResourceFiles = new ArrayList<>();
 
   private String classPath;
+
+  private String extdir;
 
   private String processorPath = "";
   private final List<String> processorNames = new ArrayList<>();
@@ -136,6 +139,9 @@ public final class OptionsParser {
         case "--generated_sources_output":
           generatedSourcesOutputJar = getArgument(argQueue, arg);
           break;
+        case "--classes_from_generated_sources_output":
+          generatedClassOutputJar = getArgument(argQueue, arg);
+          break;
         case "--sources":
           collectFlagArguments(sourceFiles, argQueue, "-");
           break;
@@ -162,6 +168,9 @@ public final class OptionsParser {
           break;
         case "--processors":
           collectProcessorArguments(processorNames, argQueue, "-");
+          break;
+        case "--extdir":
+          extdir = getArgument(argQueue, arg);
           break;
         case "--output":
           outputJar = getArgument(argQueue, arg);
@@ -330,6 +339,10 @@ public final class OptionsParser {
     return generatedSourcesOutputJar;
   }
 
+  public String getGeneratedClassOutputJar() {
+    return generatedClassOutputJar;
+  }
+
   public List<String> getSourceFiles() {
     return sourceFiles;
   }
@@ -356,6 +369,10 @@ public final class OptionsParser {
 
   public String getClassPath() {
     return classPath;
+  }
+
+  public String getExtdir() {
+    return extdir;
   }
 
   public String getProcessorPath() {

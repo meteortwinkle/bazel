@@ -13,6 +13,7 @@
 // limitations under the License.
 package com.google.devtools.build.lib.skyframe;
 
+import com.google.common.collect.ImmutableSet;
 import com.google.devtools.build.lib.cmdline.LabelValidator;
 import com.google.devtools.build.lib.cmdline.ResolvedTargets;
 import com.google.devtools.build.lib.cmdline.TargetParsingException;
@@ -156,13 +157,51 @@ public class RecursivePackageProviderBackedTargetPatternResolver
   }
 
   @Override
-  public ResolvedTargets<Target> findTargetsBeneathDirectory(
-      String originalPattern, String pathPrefix, boolean rulesOnly)
+  public ResolvedTargets<Target> findTargetsBeneathDirectory(String originalPattern,
+      String directory, boolean rulesOnly, ImmutableSet<String> excludedSubdirectories)
       throws TargetParsingException, InterruptedException {
     FilteringPolicy actualPolicy = rulesOnly
         ? FilteringPolicies.and(FilteringPolicies.RULES_ONLY, policy)
         : policy;
 
+    PathFragment pathFragment = getPathFragment(directory);
+
+    ImmutableSet.Builder<PathFragment> excludedPathFragmentsBuilder = ImmutableSet.builder();
+    for (String excludedDirectory : excludedSubdirectories) {
+      excludedPathFragmentsBuilder.add(getPathFragment(excludedDirectory));
+    }
+    ImmutableSet<PathFragment> excludedPathFragments = excludedPathFragmentsBuilder.build();
+
+    ResolvedTargets.Builder<Target> targetBuilder = ResolvedTargets.builder();
+    for (Path root : pkgPath.getPathEntries()) {
+      RootedPath rootedPath = RootedPath.toRootedPath(root, pathFragment);
+      Iterable<PathFragment> packagesUnderDirectory =
+          recursivePackageProvider.getPackagesUnderDirectory(rootedPath, excludedPathFragments);
+      for (PathFragment pkg : packagesUnderDirectory) {
+        targetBuilder.merge(getTargetsInPackage(originalPattern, pkg, FilteringPolicies.NO_FILTER));
+      }
+    }
+
+    // Perform the no-targets-found check before applying the filtering policy so we only return the
+    // error if the input directory's subtree really contains no targets.
+    if (targetBuilder.isEmpty()) {
+      throw new TargetParsingException("no targets found beneath '" + pathFragment + "'");
+    }
+    ResolvedTargets<Target> prefilteredTargets = targetBuilder.build();
+     
+    ResolvedTargets.Builder<Target> filteredBuilder = ResolvedTargets.builder();
+    if (prefilteredTargets.hasError()) {
+      filteredBuilder.setError();
+    }
+    for (Target target : prefilteredTargets.getTargets()) {
+      if (actualPolicy.shouldRetain(target, false)) {
+        filteredBuilder.add(target);
+      }
+    }
+    return filteredBuilder.build();
+  }
+
+  private static PathFragment getPathFragment(String pathPrefix) throws TargetParsingException {
     PathFragment directory = new PathFragment(pathPrefix);
     if (directory.containsUplevelReferences()) {
       throw new TargetParsingException("up-level references are not permitted: '"
@@ -171,36 +210,7 @@ public class RecursivePackageProviderBackedTargetPatternResolver
     if (!pathPrefix.isEmpty() && (LabelValidator.validatePackageName(pathPrefix) != null)) {
       throw new TargetParsingException("'" + pathPrefix + "' is not a valid package name");
     }
-
-    ResolvedTargets.Builder<Target> builder = ResolvedTargets.builder();
-
-    for (Path root : pkgPath.getPathEntries()) {
-      RootedPath rootedPath = RootedPath.toRootedPath(root, directory);
-      Iterable<PathFragment> packagesUnderDirectory = recursivePackageProvider
-          .getPackagesUnderDirectory(rootedPath);
-      for (PathFragment pkg : packagesUnderDirectory) {
-        builder.merge(getTargetsInPackage(originalPattern, pkg, FilteringPolicies.NO_FILTER));
-      }
-    }
-
-    if (builder.isEmpty()) {
-      throw new TargetParsingException("no targets found beneath '" + directory + "'");
-    }
-
-    // Apply the transform after the check so we only return the
-    // error if the tree really contains no targets.
-    ResolvedTargets<Target> intermediateResult = builder.build();
-    ResolvedTargets.Builder<Target> filteredBuilder = ResolvedTargets.builder();
-    if (intermediateResult.hasError()) {
-      filteredBuilder.setError();
-    }
-    for (Target target : intermediateResult.getTargets()) {
-      if (actualPolicy.shouldRetain(target, false)) {
-        filteredBuilder.add(target);
-      }
-    }
-    return filteredBuilder.build();
+    return directory;
   }
-
 }
 

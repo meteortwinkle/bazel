@@ -141,7 +141,7 @@
 <h2 id='overview'>Bazel overview</h2>
 
 <p>
-  Running Bazel is easy.  Simply go to
+  To run Bazel, go to
 
   your base workspace directory
   or any of its subdirectories and type <code>bazel</code>.
@@ -163,6 +163,7 @@
 
     <a href='#info'>info</a>                Displays runtime info about the bazel server.
 
+    <a href='#fetch'>fetch</a>                Fetches all external dependencies of a target.
     <a href='#query'>query</a>               Executes a dependency graph query.
 
     <a href='#run'>run</a>                 Runs the specified target.
@@ -653,6 +654,64 @@ Subtractive patterns:
   specify them explicitly on the command line.
 </p>
 
+<h3 id='fetch'>Fetching external dependencies</h3>
+
+<p>
+  By default, Bazel will download and symlink external dependencies during the
+  build. However, this can be undesirable, either because you'd like to know
+  when new external dependendencies are added or because you'd like to
+  "prefetch" dependencies (say, before a flight where you'll be offline). If you
+  would like to prevent new dependencies from being added during builds, you
+  can specify the <code>--fetch=false</code> flag.
+</p>
+
+<p>
+  If you disallow fetching during builds and Bazel finds new external
+  dependencies, your build will fail with:
+<pre>
+ERROR: /path/to/your/BUILD:1:1: error loading package 'external': to fix, run
+    bazel fetch //...
+External repository @your-repo not found and referenced by '//your:target'.
+ERROR: Loading failed; build aborted.
+</pre>
+</p>
+
+<p>
+  You can manually fetch dependencies by running <code>bazel fetch</code>. If
+  you disallow during-build fetching, you'll need to run <code>bazel
+  fetch</code>:
+  <ol>
+    <li>Before you build for the first time.
+    <li>After you add a new external dependency.
+  </ol>
+  Once it has been run, you should not need to run it again until the WORKSPACE
+  file changes.
+</p>
+
+<p>
+  <code>fetch</code> takes a list of targets to fetch dependencies for. For
+  example, this would fetch dependencies needed to build <code>//foo:bar</code>
+  and <code>//bar:baz</code>:
+<pre>
+$ bazel fetch //foo:bar //bar:baz
+</pre>
+</p>
+
+<p>
+  To fetch all external dependencies for a workspace, run:
+<pre>
+$ bazel fetch //...
+</pre>
+</p>
+
+<p>
+  You do not need to run bazel fetch at all if you have all of the tools you are
+  using (from library jars to the JDK itself) under your workspace root.
+  However, if you're using anything outside of the workspace directory then you
+  will need to run <code>bazel fetch</code> before running
+  <code>bazel build</code>.
+</p>
+
 <h3 id='configurations'>Build configurations and cross-compilation</h3>
 
 <p>
@@ -741,9 +800,8 @@ Subtractive patterns:
   </li>
   <li>
     Use the value of <code class="flag">--host_cpu</code> for
-    <code class='flag'>--cpu</code>
-
-    and <code class='flag'>--java_cpu</code> (default: <code>k8</code>).
+    <code class='flag'>--cpu</code> and <code class='flag'>--java_cpu</code>
+    (default: <code>k8</code>).
   </li>
   <li>Use the same values of these options as specified in the request
     configuration:
@@ -948,21 +1006,6 @@ Subtractive patterns:
   We encourage developers to get out of the habit of
   using <code>clean</code> and into that of reporting bugs in the
   tools.
-</p>
-
-<h4 id='rm'><code>bazel rm</code></h4>
-<p>
-  <code>bazel rm</code> is a more limited form of <code>clean</code>,
-  that deletes only the named files.  For example:
-</p>
-<pre>
-  % bazel rm bazel-bin/foo/libfoo.a
-</pre>
-<p>
-  Some users use <code>bazel rm</code> when performing timing
-  experiments of a particular build step: by deleting a single file
-  and running a build, only that file (and others that depend on it)
-  will be rebuilt.
 </p>
 
 <h3 id='phases'>Phases of a build</h3>
@@ -1795,15 +1838,24 @@ the compilation of binaries during the build.
   source files. The compiler can be selected by settings the
   <a href="#flag--java_langtools"><code class='flag'>--java_langtools</code></a>
   and the
-  <a href="#flag--javac_bootclasspath"><code class='flag'>--javac_bootclasspath</code></a>
+  <a href="#flag--javabuilder_top"><code class='flag'>--javabuilder_top</code></a>
   options.
 </p>
 
 <h4 id='flag--javac_bootclasspath'><code class='flag'>--javac_bootclasspath <var>label</var></code></h4>
 <p>
-  This option specifies the label of the bootclasspath that should be used by
-  the Java compiler. This lets you compile against different versions of the
-  Java class library, for example, version 7 instead of version 6.
+  This option specifies the label of the bootstrap classes that Java code
+  should be compiled against. This option should always be set together with
+  <a href="#flag--javac_extdir"><code class='flag'>--javac_extdir</code></a>
+  when cross-compiling to a different Java platform version.
+</p>
+
+<h4 id='flag--javac_extdir'><code class='flag'>--javac_extdir <var>label</var></code></h4>
+<p>
+  This option specifies the label of the extension classes that Java code
+  should be compiled against. This option should always be set together with
+  <a href="#flag--javac_bootclasspath"><code class='flag'>--javac_bootclasspath</code></a>
+  when cross-compiling to a different Java platform version.
 </p>
 
 <h3 id='strategy-options'>Build strategy options</h3>
@@ -2339,7 +2391,7 @@ either to the terminal, or to additional log files.
 </p>
 
 <pre>
-  &gt;&gt;&gt;&gt;&gt; # //examples/cpp:hello-world
+  &gt;&gt;&gt;&gt;&gt; # //examples/cpp:hello-world [action 'Linking bazel-out/local_linux-fastbuild/bin/examples/cpp/hello-world']
   (cd /var/tmp/_bazel_jrluser/4c084335afceb392cfbe7c31afee3a9f/base_workspace && \
     exec env - \
     /usr/bin/gcc -o bazel-out/local_linux-fastbuild/bin/examples/cpp/hello-world bazel-out/local_linux-fastbuild/bin/examples/cpp/_objs/hello-world/examples/cpp/hello-world.pic.o bazel-out/local_linux-fastbuild/bin/examples/cpp/libhello-lib.a bazel-out/local_linux-fastbuild/bin/tools/cpp/libmalloc.a -lstdc++ -B/usr/bin -Wl,-S)
@@ -3114,7 +3166,7 @@ in an environment closer to the current shell environment. Note that none of the
     <a href='build-encyclopedia.html#make_variables'
     >"Make" environment</a>. If the <code class='flag'>--show_make_env</code> flag is
     specified, all variables in the current configuration's "Make" environment
-    are also displayed (e.g. <code>CC</code>, <code>GNU_TARGET</code>, etc).
+    are also displayed (e.g. <code>CC</code>, <code>GLIBC_VERSION</code>, etc).
     These are the variables accessed using the <code>$(CC)</code>
     or <code>varref("CC")</code> syntax inside BUILD files.
   </li>
@@ -3388,11 +3440,12 @@ in an environment closer to the current shell environment. Note that none of the
 
 <h4 id='flag--config'><code class='flag'>--config <var>name</var></code></h4>
 <p>
- Selects additional config sections from the rc files; for the current
+ Selects additional config section from the rc files; for the current
  <code>command</code>, it also pulls in the options from
  <code>command:name</code> if such a section exists. Note that it is currently
  only possible to provide these options on the command line, not in the rc
- files.
+ files. Can be specified multiple times to add flags from several
+ config sections.
 </p>
 
 <h4 id='flag--curses'><code class='flag'>--curses (yes|no|auto)</code></h4>

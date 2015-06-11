@@ -48,6 +48,7 @@ cc_binary(
         ":blaze_util_os",
     ],
     copts = [
+        "-Wno-sign-compare",
         "-DBLAZE_JAVA_CPU=\\\"k8\\\"",
         "-DBLAZE_OPENSOURCE=1",
     ],
@@ -56,20 +57,13 @@ cc_binary(
         "//src:darwin": [
         ],
         "//conditions:default": [
-            "-larchive",
             "-lrt",
         ],
     }),
     visibility = ["//src:__pkg__"],
-    deps = select({
-        "//src:darwin": [
-            ":md5",
-            ":util",
-            "//fromhost:libarchive",
-        ],
-        "//conditions:default": [
-            ":md5",
-            ":util",
-        ],
-    }),
+    deps = [
+        ":md5",
+        ":util",
+        "//third_party/ijar:zip",
+    ],
 )

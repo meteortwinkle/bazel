@@ -5,6 +5,7 @@ java_library(
     deps = [
         "//src/main/java:bazel-core",
         "//src/main/java:collect",
+        "//src/main/java:events",
         "//src/main/java:vfs",
         "//third_party:guava",
         "//third_party:guava-testlib",
@@ -19,11 +20,13 @@ java_test(
         "com/google/devtools/build/skyframe/*.java",
     ]),
     args = ["com.google.devtools.build.skyframe.AllTests"],
+    tags = ["skyframe"],
     deps = [
         ":testutil",
         "//src/main/java:bazel-core",
         "//src/main/java:collect",
         "//src/main/java:concurrent",
+        "//src/main/java:events",
         "//src/main/java:vfs",
         "//third_party:guava",
         "//third_party:guava-testlib",
@@ -63,6 +66,7 @@ java_library(
         ":testutil",
         "//src/main/java:bazel-core",
         "//src/main/java:concurrent",
+        "//src/main/java:events",
         "//src/main/java:shell",
         "//src/main/java:vfs",
         "//third_party:guava",
@@ -110,6 +114,7 @@ java_test(
     ),
     args = ["com.google.devtools.build.lib.AllTests"],
     data = glob([test_prefix + "/vfs/*.zip"]),
+    tags = ["foundations"],
     deps = [
         ":foundations_testutil",
         ":test_runner",
@@ -117,6 +122,7 @@ java_test(
         "//src/main/java:bazel-core",
         "//src/main/java:collect",
         "//src/main/java:concurrent",
+        "//src/main/java:events",
         "//src/main/java:options",
         "//src/main/java:shell",
         "//src/main/java:unix",
@@ -164,6 +170,7 @@ java_library(
         ":testutil",
         "//src/main/java:bazel-core",
         "//src/main/java:concurrent",
+        "//src/main/java:events",
         "//src/main/java:options",
         "//src/main/java:vfs",
         "//third_party:guava",
@@ -189,6 +196,7 @@ java_test(
         "//src/main/java:bazel-core",
         "//src/main/java:collect",
         "//src/main/java:concurrent",
+        "//src/main/java:events",
         "//src/main/java:options",
         "//src/main/java:vfs",
         "//third_party:guava",
@@ -220,6 +228,7 @@ java_library(
         "//src/main/java:bazel-core",
         "//src/main/java:collect",
         "//src/main/java:concurrent",
+        "//src/main/java:events",
         "//src/main/java:options",
         "//src/main/java:vfs",
         "//src/main/protobuf:proto_extra_actions_base",
@@ -340,6 +349,7 @@ java_test(
         ":testutil",
         "//src/main/java:bazel-core",
         "//src/main/java:collect",
+        "//src/main/java:events",
         "//src/main/java:vfs",
         "//third_party:guava",
         "//third_party:guava-testlib",
@@ -358,6 +368,7 @@ java_library(
         ":foundations_testutil",
         ":testutil",
         "//src/main/java:bazel-core",
+        "//src/main/java:events",
         "//src/main/java:options",
         "//src/main/java:vfs",
         "//src/main/protobuf:proto_extra_actions_base",
@@ -383,6 +394,7 @@ java_test(
         ":test_runner",
         ":testutil",
         "//src/main/java:bazel-core",
+        "//src/main/java:events",
         "//src/main/java:vfs",
         "//third_party:guava",
         "//third_party:guava-testlib",
@@ -423,6 +435,16 @@ java_test(
     ],
 )
 
+java_binary(
+    name = "skylarkshell",
+    srcs = ["com/google/devtools/build/lib/syntax/SkylarkShell.java"],
+    main_class = "com.google.devtools.build.lib.syntax.SkylarkShell",
+    deps = [
+        "//src/main/java:bazel-core",
+        "//src/main/java:events",
+    ],
+)
+
 java_test(
     name = "syntax_test",
     srcs = glob([
@@ -436,6 +458,7 @@ java_test(
         "//src/main/java:bazel-core",
         "//src/main/java:collect",
         "//src/main/java:concurrent",
+        "//src/main/java:events",
         "//src/main/java:vfs",
         "//third_party:guava",
         "//third_party:guava-testlib",
@@ -467,7 +490,9 @@ java_test(
 TEST_SUITES = [
     "rules",
     "analysis",
+    "foundations",
     "shell",
+    "skyframe",
 ]
 
 [

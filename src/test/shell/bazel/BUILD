@@ -8,6 +8,7 @@ filegroup(
         "testenv.sh",
         "//examples:srcs",
         "//external:bootclasspath",
+        "//external:extdir",
         "//external:jdk-default",
         "//external:langtools",
         "//src:bazel",
@@ -103,10 +104,25 @@ sh_test(
 )
 
 sh_test(
+    name = "workspace_test",
+    srcs = ["workspace_test.sh"],
+    data = [
+        ":test-deps",
+        "//src/main/java/com/google/devtools/build/workspace:generate_workspace",
+    ],
+)
+
+sh_test(
     name = "bazel_sandboxing_test",
     srcs = ["bazel_sandboxing_test.sh"],
     data = [":test-deps"],
-    tags = ["manual"],
+    tags = ["manual"],  # Test is still flaky.
+)
+
+sh_test(
+    name = "bazel_worker_test",
+    srcs = ["bazel_worker_test.sh"],
+    data = [":test-deps"],
 )
 
 test_suite(

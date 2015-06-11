@@ -31,12 +31,17 @@ import com.google.devtools.build.lib.bazel.repository.NewHttpArchiveFunction;
 import com.google.devtools.build.lib.bazel.repository.NewLocalRepositoryFunction;
 import com.google.devtools.build.lib.bazel.repository.RepositoryDelegatorFunction;
 import com.google.devtools.build.lib.bazel.repository.RepositoryFunction;
+import com.google.devtools.build.lib.bazel.rules.android.AndroidNdkRepositoryFunction;
+import com.google.devtools.build.lib.bazel.rules.android.AndroidNdkRepositoryRule;
+import com.google.devtools.build.lib.bazel.rules.android.AndroidSdkRepositoryFunction;
+import com.google.devtools.build.lib.bazel.rules.android.AndroidSdkRepositoryRule;
 import com.google.devtools.build.lib.bazel.rules.workspace.HttpArchiveRule;
 import com.google.devtools.build.lib.bazel.rules.workspace.HttpJarRule;
 import com.google.devtools.build.lib.bazel.rules.workspace.LocalRepositoryRule;
 import com.google.devtools.build.lib.bazel.rules.workspace.MavenJarRule;
 import com.google.devtools.build.lib.bazel.rules.workspace.NewHttpArchiveRule;
 import com.google.devtools.build.lib.bazel.rules.workspace.NewLocalRepositoryRule;
+import com.google.devtools.build.lib.pkgcache.PackageCacheOptions;
 import com.google.devtools.build.lib.runtime.BlazeCommand;
 import com.google.devtools.build.lib.runtime.BlazeModule;
 import com.google.devtools.build.lib.skyframe.SkyFunctions;
@@ -49,6 +54,7 @@ import com.google.devtools.common.options.OptionsProvider;
 import java.util.Map.Entry;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Adds support for fetching external code.
@@ -58,6 +64,7 @@ public class BazelRepositoryModule extends BlazeModule {
   private BlazeDirectories directories;
   // A map of repository handlers that can be looked up by rule class name.
   private final ImmutableMap<String, RepositoryFunction> repositoryHandlers;
+  private final AtomicBoolean isFetch = new AtomicBoolean(false);
 
   public BazelRepositoryModule() {
     repositoryHandlers = ImmutableMap.<String, RepositoryFunction>builder()
@@ -67,6 +74,8 @@ public class BazelRepositoryModule extends BlazeModule {
         .put(MavenJarRule.NAME, new MavenJarFunction())
         .put(NewHttpArchiveRule.NAME, new NewHttpArchiveFunction())
         .put(NewLocalRepositoryRule.NAME, new NewLocalRepositoryFunction())
+        .put(AndroidSdkRepositoryRule.NAME, new AndroidSdkRepositoryFunction())
+        .put(AndroidNdkRepositoryRule.NAME, new AndroidNdkRepositoryFunction())
         .build();
   }
 
@@ -99,8 +108,15 @@ public class BazelRepositoryModule extends BlazeModule {
     }
   }
 
+  @Override
   public Iterable<? extends BlazeCommand> getCommands() {
     return ImmutableList.of(new FetchCommand());
+  }
+
+  @Override
+  public void handleOptions(OptionsProvider optionsProvider) {
+    PackageCacheOptions pkgOptions = optionsProvider.getOptions(PackageCacheOptions.class);
+    isFetch.set(pkgOptions != null && pkgOptions.fetch);
   }
 
   @Override
@@ -114,7 +130,7 @@ public class BazelRepositoryModule extends BlazeModule {
 
     // Create the delegator everything flows through.
     builder.put(SkyFunctions.REPOSITORY,
-        new RepositoryDelegatorFunction(repositoryHandlers));
+        new RepositoryDelegatorFunction(directories, repositoryHandlers, isFetch));
 
     // Helper SkyFunctions.
     builder.put(SkyFunctionName.computed(HttpDownloadFunction.NAME), new HttpDownloadFunction());

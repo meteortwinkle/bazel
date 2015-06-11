@@ -12,7 +12,7 @@ it in a global variable. [See example](cookbook.md#empty).
 Attributes
 ----------
 
-An attribute is a rule argument, such as `srcs` or `deps`. You have to list
+An attribute is a rule argument, such as `srcs` or `deps`. You must list
 the attributes and their type when you define a rule.
 
 ```python
@@ -29,7 +29,7 @@ If an attribute starts with `_`, it is private and users cannot set it. It
 is useful in particular for label attributes (your rule will have an
 implicit dependency on this label).
 
-The following attributes are implicitely added to every rule: `name`,
+The following attributes are implicitly added to every rule: `name`,
 `visibility`, `deprecation`, `tags`, `testonly`, `features`.
 
 To access an attribute, use `ctx.attr.<attribute_name>`. The name and the
@@ -97,7 +97,7 @@ In the above case it's possible to access targets declared in `my_rule.deps`:
 
 ```python
 def impl(ctx):
-  for dep in ctx.targets.deps:
+  for dep in ctx.attr.deps:
     # Do something with dep
   ...
 
@@ -144,8 +144,8 @@ set of output files.
 The set of input and output files must be known during the analysis phase. It
 might depend on the value of attributes and information from dependencies, but
 it cannot depend on the result of the execution. For example, if your action
-runs the zip command, you must specify which files you expect (before running
-zip).
+runs the unzip command, you must specify which files you expect to be inflated
+(before running unzip).
 
 Actions are comparable to pure functions: They should depend only on the
 provided inputs, and avoid accessing computer information, username, clock,
@@ -217,7 +217,7 @@ A depending rule might access these data as struct fields of the depending
 def depending_rule_implementation(ctx):
   ...
   s = set()
-  for dep_target in ctx.targets.deps:
+  for dep_target in ctx.attr.deps:
     s += dep_target.transitive_data
   ...
 ```
@@ -244,7 +244,7 @@ transitively from dependent rules:
 def rule_implementation(ctx):
   ...
   transitive_runfiles = set()
-  for dep in ctx.targets.special_dependencies:
+  for dep in ctx.attr.special_dependencies:
      transitive_runfiles += dep.transitive_runtime_files
 
   runfiles = ctx.runfiles(

@@ -30,6 +30,8 @@ import com.google.devtools.build.lib.analysis.config.ConfigurationEnvironment;
 import com.google.devtools.build.lib.analysis.config.FragmentOptions;
 import com.google.devtools.build.lib.analysis.config.InvalidConfigurationException;
 import com.google.devtools.build.lib.analysis.constraints.EnvironmentRule;
+import com.google.devtools.build.lib.bazel.rules.android.AndroidNdkRepositoryRule;
+import com.google.devtools.build.lib.bazel.rules.android.AndroidSdkRepositoryRule;
 import com.google.devtools.build.lib.bazel.rules.common.BazelActionListenerRule;
 import com.google.devtools.build.lib.bazel.rules.common.BazelExtraActionRule;
 import com.google.devtools.build.lib.bazel.rules.common.BazelFilegroupRule;
@@ -48,6 +50,7 @@ import com.google.devtools.build.lib.bazel.rules.python.BazelPyBinaryRule;
 import com.google.devtools.build.lib.bazel.rules.python.BazelPyLibraryRule;
 import com.google.devtools.build.lib.bazel.rules.python.BazelPyRuleClasses;
 import com.google.devtools.build.lib.bazel.rules.python.BazelPyTestRule;
+import com.google.devtools.build.lib.bazel.rules.python.BazelPythonConfiguration;
 import com.google.devtools.build.lib.bazel.rules.sh.BazelShBinaryRule;
 import com.google.devtools.build.lib.bazel.rules.sh.BazelShLibraryRule;
 import com.google.devtools.build.lib.bazel.rules.sh.BazelShRuleClasses;
@@ -81,6 +84,8 @@ import com.google.devtools.build.lib.rules.objc.IosApplicationRule;
 import com.google.devtools.build.lib.rules.objc.IosDeviceRule;
 import com.google.devtools.build.lib.rules.objc.IosExtensionBinaryRule;
 import com.google.devtools.build.lib.rules.objc.IosExtensionRule;
+import com.google.devtools.build.lib.rules.objc.J2ObjcCommandLineOptions;
+import com.google.devtools.build.lib.rules.objc.J2ObjcConfiguration;
 import com.google.devtools.build.lib.rules.objc.ObjcBinaryRule;
 import com.google.devtools.build.lib.rules.objc.ObjcBuildInfoFactory;
 import com.google.devtools.build.lib.rules.objc.ObjcBundleLibraryRule;
@@ -180,7 +185,9 @@ public class BazelRuleClassProvider {
           CppOptions.class,
           JavaOptions.class,
           PythonOptions.class,
-          ObjcCommandLineOptions.class
+          BazelPythonConfiguration.Options.class,
+          ObjcCommandLineOptions.class,
+          J2ObjcCommandLineOptions.class
       );
 
   /**
@@ -298,13 +305,17 @@ public class BazelRuleClassProvider {
     builder.addRuleDefinition(new MavenJarRule());
     builder.addRuleDefinition(new NewHttpArchiveRule());
     builder.addRuleDefinition(new NewLocalRepositoryRule());
+    builder.addRuleDefinition(new AndroidSdkRepositoryRule());
+    builder.addRuleDefinition(new AndroidNdkRepositoryRule());
 
     builder.addConfigurationFragment(new BazelConfiguration.Loader());
     builder.addConfigurationFragment(new CppConfigurationLoader(
         Functions.<String>identity()));
     builder.addConfigurationFragment(new PythonConfigurationLoader(Functions.<String>identity()));
+    builder.addConfigurationFragment(new BazelPythonConfiguration.Loader());
     builder.addConfigurationFragment(new JvmConfigurationLoader(JAVA_CPU_SUPPLIER));
     builder.addConfigurationFragment(new JavaConfigurationLoader(JAVA_CPU_SUPPLIER));
     builder.addConfigurationFragment(new ObjcConfigurationLoader());
+    builder.addConfigurationFragment(new J2ObjcConfiguration.Loader());
   }
 }

@@ -11,8 +11,8 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-#ifndef DEVTOOLS_BLAZE_MAIN_BLAZE_STARTUP_OPTIONS_H_
-#define DEVTOOLS_BLAZE_MAIN_BLAZE_STARTUP_OPTIONS_H_
+#ifndef BAZEL_SRC_MAIN_CPP_BLAZE_STARTUP_OPTIONS_H_
+#define BAZEL_SRC_MAIN_CPP_BLAZE_STARTUP_OPTIONS_H_
 
 #include <map>
 #include <memory>
@@ -101,9 +101,9 @@ class BlazeStartupOptions {
   //
   // Returns the exit code after this operation. "error" will be set to a
   // descriptive string for any value other than blaze_exit_code::SUCCESS.
-  blaze_exit_code::ExitCode AddJVMArguments(const string &host_javabase,
-                                            std::vector<string> *result,
-                                            string *error) const;
+  blaze_exit_code::ExitCode AddJVMArguments(
+    const string &host_javabase, std::vector<string> *result,
+    const std::vector<string> &user_options, string *error) const;
 
   // Blaze's output base.  Everything is relative to this.  See
   // the BlazeDirectories Java class for details.
@@ -215,4 +215,4 @@ class BlazeStartupOptions {
 };
 
 }  // namespace blaze
-#endif  // DEVTOOLS_BLAZE_MAIN_BLAZE_STARTUP_OPTIONS_H_
+#endif  // BAZEL_SRC_MAIN_CPP_BLAZE_STARTUP_OPTIONS_H_

@@ -16,20 +16,35 @@ and work on the Bazel code.
 
 ## Patch Acceptance Process
 
-1. Discuss your plan and design, and get agreement on our [mailing
-   list](https://groups.google.com/forum/#!forum/bazel-discuss).
-2. Prepare a git commit that implements the feature. Don't forget to add tests.
-3. Upload to [Gerrit](https://bazel-review.googlesource.com); Gerrit upload
-   requires that you have signed a
-   [Contributor License Agreement](https://cla.developers.google.com/). See the [Gerrit
-   documentation](https://gerrit-review.googlesource.com/Documentation/user-upload.html) for
-   instructions on uploading your commit.
-4. Complete a code review with a
-   [core contributor](governance.html#core-contributors).
-5. An engineer at Google applies the patch to our internal version control
+<!-- Our markdown parser doesn't support nested lists. -->
+<ol>
+<li>Discuss your plan and design, and get agreement on our <a href="https://groups.google.com/forum/#!forum/bazel-dev">mailing list</a>.
+<li>Prepare a git commit that implements the feature. Don't forget to add tests.
+<li>Create a new code review on <a href="https://bazel-review.googlesource.com">Gerrit</a>
+   by running:
+   <pre>
+$ git push https://bazel.googlesource.com/bazel HEAD:refs/for/master
+   </pre>
+   Gerrit upload requires that you:
+   <ul>
+     <li>Have signed a
+       <a href="https://cla.developers.google.com">Contributor License Agreement</a>.
+     <li>Have an automatically generated "Change Id" line in your commit message.
+       If you haven't used Gerrit before, it will print a bash command to create
+       the git hook and then you will need to run `git commit --amend` to add the
+       line.
+   </ul>
+   See the
+   <a href="https://gerrit-review.googlesource.com/Documentation/user-upload.html">Gerrit documentation</a>
+   for more information about uploading changes.
+<li>Complete a code review with a
+   <a href="governance.html#core-contributors">core contributor</a>. Amend your existing
+   commit and re-push to make changes to your patch.
+<li>An engineer at Google applies the patch to our internal version control
    system.
-6. The patch is exported as a Git commit, at which point the Gerrit code review
+<li>The patch is exported as a Git commit, at which point the Gerrit code review
    is closed.
+</ol>
 
 We will make changes to this process as necessary, and we're hoping to move
 closer to a fully open development model in the future (also see
@@ -67,64 +82,39 @@ compiling it:
   resulting binary can be found at `bazel-bin/src/bazel`.
 
 In addition to the Bazel binary, you might want to build the various tools Bazel
-uses:
-
-* For Java support
-  * JavaBuilder is the java compiler wrapper used by Bazel and its target can be
-    found at `//src/java_tools/buildjar:JavaBuilder_deploy.jar`.
-  * SingleJar is a tool to assemble a single jar composed of all classes from
-    all jar dependencies (build the `*_deploy.jar` files), it can be found at
-    `//src/java_tools/singlejar:SingleJar_deploy.jar`.
-  * ijar is a tool to extracts the class interfaces of jars and is a third
-    party software at `//third_party/ijar`.
-* For Objective-C / iOS support
-  * actoolzip is a utility that runs OS X's actool and zips up its output for
-    further processing. It is currently compiled and placed into `tools/objc/`
-    by `compile.sh`.
-  * ibtoolzip is a utility that runs OS X's ibtool and zips up its output for
-    further processing. It is currently compiled and placed into `tools/objc/`
-    by `compile.sh`.
-  * momczip is a utility that runs OS X's momc and zips up its output for
-    further processing. It is currently compiled and placed into `tools/objc/`
-    by `compile.sh`.
-  * bundlemerge is a tool that can construct iOS bundles (such as .ipa files or
-    .bndl directories), including plist merging and zip creation. It is currently
-    compiled and placed into `tools/objc/` by `compile.sh`.
-  * plmerge is a tool used for merging plists. It is currently compiled and
-    placed into `tools/objc/` by `compile.sh`.
-  * xcodegen is a tool that assembles an Xcode project file matching Bazel build
-    targets. It is currently compiled and placed into `tools/objc/` by
-    `compile.sh`.
-  * iossim allows us to run iOS applications built by Bazel on Xcode's iOS
-    simulator and is third party software located at `//third_party/iossim`
+uses. They are located in `//src/java_tools`, `//src/objc_tools` and
+`//src/tools` and contains README files describing their respective
+utility.
 
 When modifying Bazel, you want to make sure that the following still works:
 
-* Bootstrap test with `sh bootstrap_test.sh all` after having removed the
+* Bootstrap test with `sh compile.sh all` after having removed the
   `output` directory: it rebuilds Bazel with `./compile.sh`, Bazel with the
   `compile.sh` Bazel and Bazel with the Bazel-built binary. It compares if the
   constructed Bazel builts are identical and then run all bazel tests with
-  `bazel test //src/...`.
-* ijar's tests with `bazel test //third_party/ijar/test/...`
+  `bazel test //src/... //third_party/ijar/...`.
 
 ### Debugging Bazel
 
-Bazel has support for debugging its Java code:
+Start creating a debug configuration for both C++ and Java in your bazelrc with the following:
 
-* Make sure you compile it with debugging enabled by adding the
-  `misc = ["-g"]` attributes to the `toolchain` rule of the
-  `tools/jdk/BUILD` file or by using the `--javacopt="-g"` option
-  on the Bazel command-line.
+build:debug -c dbg
+build:debug --javacopt="-g"
+build:debug --copt="-g"
+build:debug --strip="never"
+
+Then you can rebuild Bazel with `bazel build --config debug //src:bazel` and use your favorite
+debugger to start debugging.
+
+For debugging the C++ client you can just fire it from gdb or lldb as you normally would.
+But if you want to debug the Java code, you must attach to the server with the following:
+
 * Run Bazel with debugging option `--host_jvm_debug` before the
   command (e.g., `bazel --batch --host_jvm_debug build //src:bazel`).
 * Attach a debugger to the port 5005. With `jdb` for instance,
   run `jdb -attach localhost:5005`. From within Eclipse, use the
   [remote Java application launch
   configuration](http://help.eclipse.org/luna/index.jsp?topic=%2Forg.eclipse.jdt.doc.user%2Ftasks%2Ftask-remotejava_launch_config.htm).
-
-If you want to debug the C++ client, ensure that you have the `-g`
-option activated for C++ build, rebuild Bazel and use your favorite C++
-debugger.
 
 ## Bazel's code description
 

@@ -19,26 +19,25 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.eventbus.Subscribe;
 import com.google.devtools.build.lib.actions.ActionContextConsumer;
-import com.google.devtools.build.lib.actions.ActionContextProvider;
 import com.google.devtools.build.lib.actions.Executor.ActionContext;
-import com.google.devtools.build.lib.actions.SimpleActionContextProvider;
 import com.google.devtools.build.lib.analysis.ConfiguredRuleClassProvider;
 import com.google.devtools.build.lib.query2.output.OutputFormatter;
 import com.google.devtools.build.lib.rules.cpp.CppCompileActionContext;
 import com.google.devtools.build.lib.rules.cpp.CppLinkActionContext;
-import com.google.devtools.build.lib.rules.cpp.LocalGccStrategy;
-import com.google.devtools.build.lib.rules.cpp.LocalLinkStrategy;
 import com.google.devtools.build.lib.rules.genquery.GenQuery;
 import com.google.devtools.build.lib.runtime.BlazeModule;
 import com.google.devtools.build.lib.runtime.BlazeRuntime;
 import com.google.devtools.build.lib.runtime.Command;
 import com.google.devtools.build.lib.runtime.GotOptionsEvent;
 import com.google.devtools.build.lib.skyframe.PrecomputedValue;
+import com.google.devtools.common.options.Converters.AssignmentConverter;
 import com.google.devtools.common.options.Option;
 import com.google.devtools.common.options.OptionsBase;
 import com.google.devtools.common.options.OptionsProvider;
 
+import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 
 /**
  * Module implementing the rule set of Bazel.
@@ -64,8 +63,17 @@ public class BazelRulesModule extends BlazeModule {
         help = "Specify how to execute genrules."
             + "'standalone' means run all of them locally."
             + "'sandboxed' means run them in namespaces based sandbox (available only on Linux)")
-
     public String genruleStrategy;
+
+    @Option(name = "strategy",
+        allowMultiple = true,
+        converter = AssignmentConverter.class,
+        defaultValue = "",
+        category = "strategy",
+        help = "Specify how to distribute compilation of other spawn actions. "
+            + "Example: 'Javac=local' means to spawn Java compilation locally. "
+            + "'JavaIjar=sandboxed' means to spawn Java Ijar actions in a sandbox. ")
+    public List<Map.Entry<String, String>> strategy;
   }
 
   private static class BazelActionContextConsumer implements ActionContextConsumer {
@@ -77,23 +85,32 @@ public class BazelRulesModule extends BlazeModule {
     }
     @Override
     public Map<String, String> getSpawnActionContexts() {
-      ImmutableMap.Builder<String, String> builder = ImmutableMap.builder();
+      Map<String, String> contexts = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
 
-      builder.put("Genrule", options.genruleStrategy);
+      contexts.put("Genrule", options.genruleStrategy);
+
+      for (Map.Entry<String, String> strategy : options.strategy) {
+        String strategyName = strategy.getValue();
+        // TODO(philwo) - remove this when the standalone / local mess is cleaned up.
+        // Some flag expansions use "local" as the strategy name, but the strategy is now called
+        // "standalone", so we'll translate it here.
+        if (strategyName.equals("local")) {
+          strategyName = "standalone";
+        }
+        contexts.put(strategy.getKey(), strategyName);
+      }
 
       // TODO(bazel-team): put this in getActionContexts (key=SpawnActionContext.class) instead
-      builder.put("", options.spawnStrategy);
+      contexts.put("", options.spawnStrategy);
 
-      return builder.build();
+      return ImmutableMap.copyOf(contexts);
     }
 
     @Override
     public Map<Class<? extends ActionContext>, String> getActionContexts() {
-      ImmutableMap.Builder<Class<? extends ActionContext>, String> builder =
-          ImmutableMap.builder();
-      builder.put(CppCompileActionContext.class, "");
-      builder.put(CppLinkActionContext.class, "");
-      return builder.build();
+      return ImmutableMap.of(
+          CppCompileActionContext.class, "",
+          CppLinkActionContext.class, "");
     }
   }
 
@@ -119,13 +136,6 @@ public class BazelRulesModule extends BlazeModule {
         optionsProvider.getOptions(BazelExecutionOptions.class)));
   }
   
-  @Override
-  public Iterable<ActionContextProvider> getActionContextProviders() {
-    return SimpleActionContextProvider.of(
-        new LocalGccStrategy(optionsProvider),
-        new LocalLinkStrategy());
-  }
-
   @Subscribe
   public void gotOptions(GotOptionsEvent event) {
     optionsProvider = event.getOptions();

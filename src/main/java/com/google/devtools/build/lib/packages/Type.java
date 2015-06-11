@@ -33,6 +33,7 @@ import com.google.devtools.build.lib.util.LoggingUtil;
 import com.google.devtools.build.lib.util.StringCanonicalizer;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -163,12 +164,12 @@ public abstract class Type<T> {
    * be careful about defining default instances in base types that get auto-inherited
    * by their children. Keep all definitions as explicit as possible.
    */
-  public abstract Iterable<Label> getLabels(Object value);
+  public abstract Collection<Label> getLabels(Object value);
 
   /**
    * {@link #getLabels} return value for types that don't contain labels.
    */
-  private static final Iterable<Label> NO_LABELS_HERE = ImmutableList.of();
+  private static final Collection<Label> NO_LABELS_HERE = ImmutableList.of();
 
   /**
    * Implementation of concatenation for this type (e.g. "val1 + val2"). Returns null to
@@ -254,7 +255,7 @@ public abstract class Type<T> {
     }
 
     @Override
-    public Iterable<Label> getLabels(Object value) {
+    public Collection<Label> getLabels(Object value) {
       return NO_LABELS_HERE;
     }
 
@@ -335,6 +336,11 @@ public abstract class Type<T> {
       DictType.create(STRING, LABEL_LIST);
 
   /**
+   * The type of a dictionary of {@linkplain #LABEL labels}.
+   */
+  public static final DictType<String, Label> LABEL_DICT_UNARY = DictType.create(STRING, LABEL);
+
+  /**
    * The type of a list of {@linkplain #FILESET_ENTRY FilesetEntries}.
    */
   public static final ListType<FilesetEntry> FILESET_ENTRY_LIST = ListType.create(FILESET_ENTRY);
@@ -394,7 +400,7 @@ public abstract class Type<T> {
     }
 
     @Override
-    public Iterable<Label> getLabels(Object value) {
+    public Collection<Label> getLabels(Object value) {
       return NO_LABELS_HERE;
     }
 
@@ -421,7 +427,7 @@ public abstract class Type<T> {
     }
 
     @Override
-    public Iterable<Label> getLabels(Object value) {
+    public Collection<Label> getLabels(Object value) {
       return NO_LABELS_HERE;
     }
 
@@ -461,7 +467,7 @@ public abstract class Type<T> {
     }
 
     @Override
-    public Iterable<Label> getLabels(Object value) {
+    public Collection<Label> getLabels(Object value) {
       return NO_LABELS_HERE;
     }
 
@@ -520,7 +526,7 @@ public abstract class Type<T> {
     }
 
     @Override
-    public Iterable<Label> getLabels(Object value) {
+    public Collection<Label> getLabels(Object value) {
       return NO_LABELS_HERE;
     }
 
@@ -563,7 +569,7 @@ public abstract class Type<T> {
     }
 
     @Override
-    public Iterable<Label> getLabels(Object value) {
+    public Collection<Label> getLabels(Object value) {
       return NO_LABELS_HERE;
     }
 
@@ -625,7 +631,7 @@ public abstract class Type<T> {
     }
 
     @Override
-    public Iterable<Label> getLabels(Object value) {
+    public Collection<Label> getLabels(Object value) {
       return cast(value).getLabels();
     }
   }
@@ -642,7 +648,7 @@ public abstract class Type<T> {
     }
 
     @Override
-    public Iterable<Label> getLabels(Object value) {
+    public Collection<Label> getLabels(Object value) {
       return ImmutableList.of(cast(value));
     }
 
@@ -694,7 +700,7 @@ public abstract class Type<T> {
     }
 
     @Override
-    public Iterable<Label> getLabels(Object value) {
+    public Collection<Label> getLabels(Object value) {
       return NO_LABELS_HERE;
     }
 
@@ -733,7 +739,7 @@ public abstract class Type<T> {
     }
 
     @Override
-    public Iterable<Label> getLabels(Object what) {
+    public Collection<Label> getLabels(Object what) {
       return NO_LABELS_HERE;
     }
 
@@ -760,7 +766,7 @@ public abstract class Type<T> {
     }
 
     @Override
-    public Iterable<Label> getLabels(Object value) {
+    public Collection<Label> getLabels(Object value) {
       return ImmutableList.of(cast(value));
     }
 
@@ -856,7 +862,7 @@ public abstract class Type<T> {
     }
 
     @Override
-    public Iterable<Label> getLabels(Object value) {
+    public Collection<Label> getLabels(Object value) {
       ImmutableList.Builder<Label> labels = ImmutableList.builder();
       for (Map.Entry<KeyT, ValueT> entry : cast(value).entrySet()) {
         labels.addAll(keyType.getLabels(entry.getKey()));
@@ -898,7 +904,7 @@ public abstract class Type<T> {
     }
 
     @Override
-    public Iterable<Label> getLabels(Object value) {
+    public Collection<Label> getLabels(Object value) {
       ImmutableList.Builder<Label> labels = ImmutableList.builder();
       for (ElemT entry : cast(value)) {
         labels.addAll(elemType.getLabels(entry));
@@ -1002,7 +1008,7 @@ public abstract class Type<T> {
    * Returns whether the specified type is a label type or not.
    */
   public static boolean isLabelType(Type<?> type) {
-    return type == LABEL || type == LABEL_LIST
+    return type == LABEL || type == LABEL_LIST || type == LABEL_DICT_UNARY
         || type == NODEP_LABEL || type == NODEP_LABEL_LIST
         || type == LABEL_LIST_DICT || type == FILESET_ENTRY_LIST;
   }

@@ -14,6 +14,7 @@
 
 package com.google.devtools.build.lib.rules.objc;
 
+import static com.google.devtools.build.lib.rules.objc.J2ObjcSource.SourceType;
 import static com.google.devtools.build.lib.rules.objc.ObjcProvider.DEFINE;
 import static com.google.devtools.build.lib.rules.objc.ObjcProvider.FORCE_LOAD_LIBRARY;
 import static com.google.devtools.build.lib.rules.objc.ObjcProvider.FRAMEWORK_DIR;
@@ -37,7 +38,6 @@ import com.google.common.base.Joiner;
 import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
 import com.google.devtools.build.lib.actions.Action;
 import com.google.devtools.build.lib.actions.Artifact;
@@ -48,6 +48,8 @@ import com.google.devtools.build.lib.analysis.actions.CommandLine;
 import com.google.devtools.build.lib.analysis.actions.CustomCommandLine;
 import com.google.devtools.build.lib.analysis.actions.FileWriteAction;
 import com.google.devtools.build.lib.analysis.actions.SpawnAction;
+import com.google.devtools.build.lib.collect.nestedset.NestedSet;
+import com.google.devtools.build.lib.rules.cpp.LinkerInputs;
 import com.google.devtools.build.lib.rules.objc.ObjcCommon.CompilationAttributes;
 import com.google.devtools.build.lib.rules.objc.XcodeProvider.Builder;
 import com.google.devtools.build.lib.shell.ShellUtils;
@@ -70,12 +72,14 @@ final class CompilationSupport {
       "The path '%s' is absolute, but only relative paths are allowed.";
 
   @VisibleForTesting
-  static final ImmutableList<String> LINKER_COVERAGE_FLAGS = ImmutableList.<String>of(
-      "-ftest-coverage", "-fprofile-arcs");
+  static final ImmutableList<String> LINKER_COVERAGE_FLAGS =
+      ImmutableList.of("-ftest-coverage", "-fprofile-arcs");
 
   @VisibleForTesting
   static final ImmutableList<String> CLANG_COVERAGE_FLAGS =
       ImmutableList.of("-fprofile-arcs", "-ftest-coverage", "-fprofile-dir=./coverage_output");
+
+  private static final String FRAMEWORK_SUFFIX = ".framework";
 
   /**
    * Iterable wrapper providing strong type safety for arguments to binary linking.
@@ -118,17 +122,14 @@ final class CompilationSupport {
    * Registers all actions necessary to compile this rule's sources and archive them.
    *
    * @param common common information about this rule and its dependencies
-   * @param optionsProvider option and plist information about this rule and its dependencies
-   *
    * @return this compilation support
    */
-  CompilationSupport registerCompileAndArchiveActions(
-      ObjcCommon common, OptionsProvider optionsProvider) {
+  CompilationSupport registerCompileAndArchiveActions(ObjcCommon common) {
     if (common.getCompilationArtifacts().isPresent()) {
       registerCompileAndArchiveActions(
           common.getCompilationArtifacts().get(),
           ObjcRuleClasses.intermediateArtifacts(ruleContext),
-          common.getObjcProvider(), optionsProvider,
+          common.getObjcProvider(),
           ruleContext.getConfiguration().isCodeCoverageEnabled());
     }
     return this;
@@ -139,21 +140,21 @@ final class CompilationSupport {
    * files into a single archive library.
    */
   private void registerCompileAndArchiveActions(CompilationArtifacts compilationArtifacts,
-      IntermediateArtifacts intermediateArtifacts,
-      ObjcProvider objcProvider, OptionsProvider optionsProvider, boolean isCodeCoverageEnabled) {
+      IntermediateArtifacts intermediateArtifacts, ObjcProvider objcProvider,
+      boolean isCodeCoverageEnabled) {
     ImmutableList.Builder<Artifact> objFiles = new ImmutableList.Builder<>();
     for (Artifact sourceFile : compilationArtifacts.getSrcs()) {
       Artifact objFile = intermediateArtifacts.objFile(sourceFile);
       objFiles.add(objFile);
       registerCompileAction(sourceFile, objFile, compilationArtifacts.getPchFile(),
-          objcProvider, intermediateArtifacts, ImmutableList.of("-fobjc-arc"), optionsProvider,
+          objcProvider, intermediateArtifacts, ImmutableList.of("-fobjc-arc"),
           isCodeCoverageEnabled);
     }
     for (Artifact nonArcSourceFile : compilationArtifacts.getNonArcSrcs()) {
       Artifact objFile = intermediateArtifacts.objFile(nonArcSourceFile);
       objFiles.add(objFile);
       registerCompileAction(nonArcSourceFile, objFile, compilationArtifacts.getPchFile(),
-          objcProvider, intermediateArtifacts, ImmutableList.of("-fno-objc-arc"), optionsProvider,
+          objcProvider, intermediateArtifacts, ImmutableList.of("-fno-objc-arc"),
           isCodeCoverageEnabled);
     }
     for (Artifact archive : compilationArtifacts.getArchive().asSet()) {
@@ -168,7 +169,6 @@ final class CompilationSupport {
       ObjcProvider objcProvider,
       IntermediateArtifacts intermediateArtifacts,
       Iterable<String> otherFlags,
-      OptionsProvider optionsProvider,
       boolean isCodeCoverageEnabled) {
     ObjcConfiguration objcConfiguration = ObjcRuleClasses.objcConfiguration(ruleContext);
     ImmutableList.Builder<String> coverageFlags = new ImmutableList.Builder<>();
@@ -194,11 +194,12 @@ final class CompilationSupport {
         .addFormatEach("-D%s", objcProvider.get(DEFINE))
         .add(coverageFlags.build())
         .add(objcConfiguration.getCopts())
-        .add(optionsProvider.getCopts())
+        .add(attributes.copts())
+        .add(attributes.optionsCopts())
         .addExecPath("-c", sourceFile)
         .addExecPath("-o", objFile);
 
-    ruleContext.registerAction(ObjcActionsBuilder.spawnOnDarwinActionBuilder()
+    ruleContext.registerAction(ObjcRuleClasses.spawnOnDarwinActionBuilder()
         .setMnemonic("ObjcCompile")
         .setExecutable(CLANG)
         .setCommandLine(commandLine.build())
@@ -235,7 +236,7 @@ final class CompilationSupport {
         Artifact.joinExecPaths("\n", objFiles),
         /*makeExecutable=*/ false));
 
-    actions.add(ObjcActionsBuilder.spawnOnDarwinActionBuilder()
+    actions.add(ObjcRuleClasses.spawnOnDarwinActionBuilder()
         .setMnemonic("ObjcLink")
         .setExecutable(ObjcRuleClasses.LIBTOOL)
         .setCommandLine(new CustomCommandLine.Builder()
@@ -284,27 +285,37 @@ final class CompilationSupport {
     Artifact linkedBinary =
         ObjcRuleClasses.intermediateArtifacts(ruleContext).singleArchitectureBinary();
 
+    ImmutableList<Artifact> ccLibraries = ccLibraries(objcProvider);
     ruleContext.registerAction(
-        ObjcActionsBuilder.spawnOnDarwinActionBuilder()
+        ObjcRuleClasses.spawnOnDarwinActionBuilder()
             .setMnemonic("ObjcLink")
             .setShellCommand(ImmutableList.of("/bin/bash", "-c"))
-            .setCommandLine(linkCommandLine(extraLinkArgs, objcProvider, linkedBinary, dsymBundle))
+            .setCommandLine(
+                linkCommandLine(extraLinkArgs, objcProvider, linkedBinary, dsymBundle, ccLibraries))
             .addOutput(linkedBinary)
             .addOutputs(dsymBundle.asSet())
             .addTransitiveInputs(objcProvider.get(LIBRARY))
             .addTransitiveInputs(objcProvider.get(IMPORTED_LIBRARY))
             .addTransitiveInputs(objcProvider.get(FRAMEWORK_FILE))
+            .addInputs(ccLibraries)
             .addInputs(extraLinkInputs)
             .build(ruleContext));
   }
 
-  private static final String FRAMEWORK_SUFFIX = ".framework";
+  private ImmutableList<Artifact> ccLibraries(ObjcProvider objcProvider) {
+    ImmutableList.Builder<Artifact> ccLibraryBuilder = ImmutableList.builder();
+    for (LinkerInputs.LibraryToLink libraryToLink : objcProvider.get(ObjcProvider.CC_LIBRARY)) {
+      ccLibraryBuilder.add(libraryToLink.getArtifact());
+    }
+    return ccLibraryBuilder.build();
+  }
 
   private CommandLine linkCommandLine(ExtraLinkArgs extraLinkArgs,
-      ObjcProvider objcProvider, Artifact linkedBinary, Optional<Artifact> dsymBundle) {
+      ObjcProvider objcProvider, Artifact linkedBinary, Optional<Artifact> dsymBundle,
+      ImmutableList<Artifact> ccLibraries) {
     ObjcConfiguration objcConfiguration = ObjcRuleClasses.objcConfiguration(ruleContext);
 
-    final CustomCommandLine.Builder commandLine = CustomCommandLine.builder();
+    CustomCommandLine.Builder commandLine = CustomCommandLine.builder();
 
     if (objcProvider.is(USES_CPP)) {
       commandLine
@@ -324,6 +335,7 @@ final class CompilationSupport {
         .addExecPath("-o", linkedBinary)
         .addExecPaths(objcProvider.get(LIBRARY))
         .addExecPaths(objcProvider.get(IMPORTED_LIBRARY))
+        .addExecPaths(ccLibraries)
         .add(dylibPaths(objcProvider))
         .addBeforeEach("-force_load", Artifact.toExecPaths(objcProvider.get(FORCE_LOAD_LIBRARY)))
         .add(extraLinkArgs)
@@ -403,37 +415,84 @@ final class CompilationSupport {
   /**
    * Registers actions that compile and archive j2Objc dependencies of this rule.
    *
-   * @param optionsProvider option and plist information about this rule and its dependencies
    * @param objcProvider common information about this rule's attributes and its dependencies
    *
    * @return this compilation support
    */
-  CompilationSupport registerJ2ObjcCompileAndArchiveActions(
-      OptionsProvider optionsProvider, ObjcProvider objcProvider) {
-    for (J2ObjcSource j2ObjcSource : ObjcRuleClasses.j2ObjcSrcsProvider(ruleContext).getSrcs()) {
+  CompilationSupport registerJ2ObjcCompileAndArchiveActions(ObjcProvider objcProvider) {
+    J2ObjcSrcsProvider provider = J2ObjcSrcsProvider.buildFrom(ruleContext);
+    Iterable<J2ObjcSource> j2ObjcSources = provider.getSrcs();
+    J2ObjcConfiguration j2objcConfiguration = ruleContext.getFragment(J2ObjcConfiguration.class);
+
+    // Only perform J2ObjC dead code stripping if flag --j2objc_dead_code_removal is specified and
+    // users have specified entry classes.
+    boolean stripJ2ObjcDeadCode = j2objcConfiguration.removeDeadCode()
+        && !provider.getEntryClasses().isEmpty();
+
+    if (stripJ2ObjcDeadCode) {
+      registerJ2ObjcDeadCodeRemovalActions(j2ObjcSources, provider.getEntryClasses());
+    }
+
+    for (J2ObjcSource j2ObjcSource : j2ObjcSources) {
+      J2ObjcSource sourceToCompile =
+          j2ObjcSource.getSourceType() == SourceType.JAVA && stripJ2ObjcDeadCode
+              ? j2ObjcSource.toPrunedSource(ruleContext)
+              : j2ObjcSource;
       IntermediateArtifacts intermediateArtifacts =
-          ObjcRuleClasses.j2objcIntermediateArtifacts(ruleContext, j2ObjcSource);
+          ObjcRuleClasses.j2objcIntermediateArtifacts(ruleContext, sourceToCompile);
       CompilationArtifacts compilationArtifact = new CompilationArtifacts.Builder()
-          .addNonArcSrcs(j2ObjcSource.getObjcSrcs())
+          .addNonArcSrcs(sourceToCompile.getObjcSrcs())
           .setIntermediateArtifacts(intermediateArtifacts)
           .setPchFile(Optional.<Artifact>absent())
           .build();
       registerCompileAndArchiveActions(compilationArtifact, intermediateArtifacts, objcProvider,
-          optionsProvider, ruleContext.getConfiguration().isCodeCoverageEnabled());
+          ruleContext.getConfiguration().isCodeCoverageEnabled());
     }
 
     return this;
+  }
+
+  private void registerJ2ObjcDeadCodeRemovalActions(Iterable<J2ObjcSource> j2ObjcSources,
+      Iterable<String> entryClasses) {
+    Artifact pruner = ruleContext.getPrerequisiteArtifact("$j2objc_dead_code_pruner", Mode.HOST);
+    J2ObjcMappingFileProvider provider = ObjcRuleClasses.j2ObjcMappingFileProvider(ruleContext);
+    NestedSet<Artifact> j2ObjcDependencyMappingFiles = provider.getDependencyMappingFiles();
+    NestedSet<Artifact> j2ObjcHeaderMappingFiles = provider.getHeaderMappingFiles();
+
+    for (J2ObjcSource j2ObjcSource : j2ObjcSources) {
+      if (j2ObjcSource.getSourceType() == SourceType.JAVA) {
+        Iterable<Artifact> sourceArtifacts = j2ObjcSource.getObjcSrcs();
+        Iterable<Artifact> prunedSourceArtifacts =
+            j2ObjcSource.toPrunedSource(ruleContext).getObjcSrcs();
+        PathFragment objcFilePath = j2ObjcSource.getObjcFilePath();
+        ruleContext.registerAction(new SpawnAction.Builder()
+            .setMnemonic("DummyPruner")
+            .setExecutable(pruner)
+            .addInput(pruner)
+            .addInputs(sourceArtifacts)
+            .addTransitiveInputs(j2ObjcDependencyMappingFiles)
+            .addTransitiveInputs(j2ObjcHeaderMappingFiles)
+            .setCommandLine(CustomCommandLine.builder()
+                .addJoinExecPaths("--input_files", ",", sourceArtifacts)
+                .addJoinExecPaths("--output_files", ",", prunedSourceArtifacts)
+                .addJoinExecPaths("--dependency_mapping_files", ",", j2ObjcDependencyMappingFiles)
+                .addJoinExecPaths("--header_mapping_files", ",", j2ObjcHeaderMappingFiles)
+                .add("--entry_classes").add(Joiner.on(",").join(entryClasses))
+                .add("--objc_file_path").add(objcFilePath.getPathString())
+                .build())
+            .addOutputs(prunedSourceArtifacts)
+            .build(ruleContext));
+      }
+    }
   }
 
   /**
    * Sets compilation-related Xcode project information on the given provider builder.
    *
    * @param common common information about this rule's attributes and its dependencies
-   * @param optionsProvider option and plist information about this rule and its dependencies
    * @return this compilation support
    */
-  CompilationSupport addXcodeSettings(Builder xcodeProviderBuilder,
-      ObjcCommon common, OptionsProvider optionsProvider) {
+  CompilationSupport addXcodeSettings(Builder xcodeProviderBuilder, ObjcCommon common) {
     ObjcConfiguration objcConfiguration = ObjcRuleClasses.objcConfiguration(ruleContext);
     for (CompilationArtifacts artifacts : common.getCompilationArtifacts().asSet()) {
       xcodeProviderBuilder.setCompilationArtifacts(artifacts);
@@ -445,7 +504,8 @@ final class CompilationSupport {
         .addHeaderSearchPaths("$(SDKROOT)/usr/include", attributes.sdkIncludes())
         .addCompilationModeCopts(objcConfiguration.getCoptsForCompilationMode())
         .addCopts(objcConfiguration.getCopts())
-        .addCopts(optionsProvider.getCopts());
+        .addCopts(attributes.copts())
+        .addCopts(attributes.optionsCopts());
     return this;
   }
 
@@ -486,11 +546,10 @@ final class CompilationSupport {
 
     Artifact dumpsyms = ruleContext.getPrerequisiteArtifact(":dumpsyms", Mode.HOST);
     Artifact breakpadFile = intermediateArtifacts.breakpadSym();
-    ruleContext.registerAction(new SpawnAction.Builder()
+    ruleContext.registerAction(ObjcRuleClasses.spawnOnDarwinActionBuilder()
         .setMnemonic("GenBreakpad")
         .setProgressMessage("Generating breakpad file: " + ruleContext.getLabel())
         .setShellCommand(ImmutableList.of("/bin/bash", "-c"))
-        .setExecutionInfo(ImmutableMap.of(ExecutionRequirements.REQUIRES_DARWIN, ""))
         .addInput(dumpsyms)
         .addInput(debugSymbolFile)
         .addArgument(String.format("%s %s > %s",

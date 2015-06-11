@@ -78,11 +78,13 @@ public final class XcodeProvider implements TransitiveInfoProvider {
         NestedSetBuilder.stableOrder();
     private final NestedSetBuilder<String> nonPropagatedHeaderSearchPaths =
         NestedSetBuilder.stableOrder();
-    private Optional<InfoplistMerging> infoplistMerging = Optional.absent();
+    private Optional<Artifact> bundleInfoplist = Optional.absent();
+    // Dependencies must be in link order because XCode observes the dependency ordering for
+    // binary linking.
     private final NestedSetBuilder<XcodeProvider> propagatedDependencies =
-        NestedSetBuilder.stableOrder();
+        NestedSetBuilder.linkOrder();
     private final NestedSetBuilder<XcodeProvider> nonPropagatedDependencies =
-        NestedSetBuilder.stableOrder();
+        NestedSetBuilder.linkOrder();
     private final ImmutableList.Builder<XcodeprojBuildSetting> xcodeprojBuildSettings =
         new ImmutableList.Builder<>();
     private final ImmutableList.Builder<XcodeprojBuildSetting>
@@ -130,11 +132,10 @@ public final class XcodeProvider implements TransitiveInfoProvider {
     }
 
     /**
-     * Sets the Info.plist merging information. Used for applications. May be
-     * absent for other bundles.
+     * Sets the Info.plist for the bundle represented by this provider.
      */
-    public Builder setInfoplistMerging(InfoplistMerging infoplistMerging) {
-      this.infoplistMerging = Optional.of(infoplistMerging);
+    public Builder setBundleInfoplist(Artifact bundleInfoplist) {
+      this.bundleInfoplist = Optional.of(bundleInfoplist);
       return this;
     }
 
@@ -402,7 +403,7 @@ public final class XcodeProvider implements TransitiveInfoProvider {
   private final NestedSet<String> nonPropagatedUserHeaderSearchPaths;
   private final NestedSet<String> propagatedHeaderSearchPaths;
   private final NestedSet<String> nonPropagatedHeaderSearchPaths;
-  private final Optional<InfoplistMerging> infoplistMerging;
+  private final Optional<Artifact> bundleInfoplist;
   private final NestedSet<XcodeProvider> propagatedDependencies;
   private final NestedSet<XcodeProvider> nonPropagatedDependencies;
   private final ImmutableList<XcodeprojBuildSetting> xcodeprojBuildSettings;
@@ -428,7 +429,7 @@ public final class XcodeProvider implements TransitiveInfoProvider {
     this.nonPropagatedUserHeaderSearchPaths = builder.nonPropagatedUserHeaderSearchPaths.build();
     this.propagatedHeaderSearchPaths = builder.propagatedHeaderSearchPaths.build();
     this.nonPropagatedHeaderSearchPaths = builder.nonPropagatedHeaderSearchPaths.build();
-    this.infoplistMerging = builder.infoplistMerging;
+    this.bundleInfoplist = builder.bundleInfoplist;
     this.propagatedDependencies = builder.propagatedDependencies.build();
     this.nonPropagatedDependencies = builder.nonPropagatedDependencies.build();
     this.xcodeprojBuildSettings = builder.xcodeprojBuildSettings.build();
@@ -589,10 +590,8 @@ public final class XcodeProvider implements TransitiveInfoProvider {
           .build());
     }
 
-    for (InfoplistMerging merging : infoplistMerging.asSet()) {
-      for (Artifact infoplist : merging.getPlistWithEverything().asSet()) {
-        targetControl.setInfoplist(infoplist.getExecPathString());
-      }
+    if (bundleInfoplist.isPresent()) {
+      targetControl.setInfoplist(bundleInfoplist.get().getExecPathString());
     }
     for (CompilationArtifacts artifacts : compilationArtifacts.asSet()) {
       targetControl

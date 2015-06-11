@@ -20,6 +20,7 @@ import com.google.devtools.build.lib.events.Location;
 
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.Stack;
@@ -46,6 +47,12 @@ public class ValidationEnvironment {
 
   // Whether this validation environment is not modified therefore clonable or not.
   private boolean clonable;
+  
+  /**
+   * Tracks the number of nested for loops that contain the statement that is currently being
+   * validated
+   */
+  private int loopCount = 0;
 
   public ValidationEnvironment(Set<String> builtinVariables) {
     parent = null;
@@ -153,5 +160,53 @@ public class ValidationEnvironment {
   public void finishTemporarilyDisableReadonlyCheckBranch() {
     readOnlyVariables.removeAll(futureReadOnlyVariables.peek());
     clonable = false;
+  }
+
+  /**
+   * Validates the AST and runs static checks.
+   */
+  public void validateAst(List<Statement> statements) throws EvalException {
+    // Add every function in the environment before validating. This is
+    // necessary because functions may call other functions defined
+    // later in the file.
+    for (Statement statement : statements) {
+      if (statement instanceof FunctionDefStatement) {
+        FunctionDefStatement fct = (FunctionDefStatement) statement;
+        declare(fct.getIdent().getName(), fct.getLocation());
+      }
+    }
+
+    for (Statement statement : statements) {
+      statement.validate(this);
+    }
+  }
+
+  /**
+   * Returns whether the current statement is inside a for loop (either in this environment or one
+   * of its parents)
+   *
+   * @return True if the current statement is inside a for loop
+   */
+  public boolean isInsideLoop() {
+    return (loopCount > 0);
+  }
+  
+  /**
+   * Signals that the block of a for loop was entered
+   */
+  public void enterLoop()   {
+    ++loopCount;
+  }
+  
+  /**
+   * Signals that the block of a for loop was left
+   *
+   * @param location The current location
+   * @throws EvalException If there was no corresponding call to
+   *         {@code ValidationEnvironment#enterLoop}
+   */
+  public void exitLoop(Location location) throws EvalException {
+    Preconditions.checkState(loopCount > 0);
+    --loopCount;
   }
 }

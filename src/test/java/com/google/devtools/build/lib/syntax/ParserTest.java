@@ -392,8 +392,8 @@ public class ParserTest extends EvaluationTestCase {
   public void testPrettyPrintFunctions() throws Exception {
     assertEquals("[x[1:3]\n]", parseFile("x[1:3]").toString());
     assertEquals("[str[42]\n]", parseFile("str[42]").toString());
-    assertEquals("[ctx.new_file(['hello'])\n]", parseFile("ctx.new_file('hello')").toString());
-    assertEquals("[new_file(['hello'])\n]", parseFile("new_file('hello')").toString());
+    assertEquals("[ctx.new_file('hello')\n]", parseFile("ctx.new_file('hello')").toString());
+    assertEquals("[new_file('hello')\n]", parseFile("new_file('hello')").toString());
   }
 
   @Test
@@ -605,20 +605,32 @@ public class ParserTest extends EvaluationTestCase {
   }
 
   @Test
+  public void testListComprehensionEmptyList() throws Exception {
+    List<ListComprehension.Clause> clauses = ((ListComprehension) parseExpression(
+        "['foo/%s.java' % x for x in []]")).getClauses();
+    assertThat(clauses).hasSize(1);
+    assertThat(clauses.get(0).getExpression().toString()).isEqualTo("[]");
+    assertThat(clauses.get(0).getLValue().getExpression().toString()).isEqualTo("x");
+  }
+
+  @Test
   public void testListComprehension() throws Exception {
-    ListComprehension list =
-      (ListComprehension) parseExpression(
-          "['foo/%s.java' % x "
-          + "for x in []]");
-    assertThat(list.getLists()).hasSize(1);
+    List<ListComprehension.Clause> clauses = ((ListComprehension) parseExpression(
+        "['foo/%s.java' % x for x in ['bar', 'wiz', 'quux']]")).getClauses();
+    assertThat(clauses).hasSize(1);
+    assertThat(clauses.get(0).getLValue().getExpression().toString()).isEqualTo("x");
+    assertThat(clauses.get(0).getExpression()).isInstanceOf(ListLiteral.class);
+  }
 
-    list = (ListComprehension) parseExpression("['foo/%s.java' % x "
-        + "for x in ['bar', 'wiz', 'quux']]");
-    assertThat(list.getLists()).hasSize(1);
-
-    list = (ListComprehension) parseExpression("['%s/%s.java' % (x, y) "
-        + "for x in ['foo', 'bar'] for y in ['baz', 'wiz', 'quux']]");
-    assertThat(list.getLists()).hasSize(2);
+  @Test
+  public void testForForListComprehension() throws Exception {
+    List<ListComprehension.Clause> clauses = ((ListComprehension) parseExpression(
+        "['%s/%s.java' % (x, y) for x in ['foo', 'bar'] for y in list]")).getClauses();
+    assertThat(clauses).hasSize(2);
+    assertThat(clauses.get(0).getLValue().getExpression().toString()).isEqualTo("x");
+    assertThat(clauses.get(0).getExpression()).isInstanceOf(ListLiteral.class);
+    assertThat(clauses.get(1).getLValue().getExpression().toString()).isEqualTo("y");
+    assertThat(clauses.get(1).getExpression()).isInstanceOf(Ident.class);
   }
 
   @Test
@@ -1021,6 +1033,20 @@ public class ParserTest extends EvaluationTestCase {
     setFailFast(false);
     parseFile("0 + not 0");
     assertContainsEvent("syntax error at 'not'");
+  }
+
+  @Test
+  public void testKwargsForbidden() throws Exception {
+    setFailFast(false);
+    parseFile("func(**dict)");
+    assertContainsEvent("**kwargs arguments are not allowed in BUILD files");
+  }
+
+  @Test
+  public void testArgsForbidden() throws Exception {
+    setFailFast(false);
+    parseFile("func(*array)");
+    assertContainsEvent("*args arguments are not allowed in BUILD files");
   }
 
   @Test

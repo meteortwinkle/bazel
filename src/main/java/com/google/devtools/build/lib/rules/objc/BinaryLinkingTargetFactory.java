@@ -29,6 +29,8 @@ import com.google.devtools.build.lib.analysis.RuleContext;
 import com.google.devtools.build.lib.analysis.RunfilesSupport;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.rules.RuleConfiguredTargetFactory;
+import com.google.devtools.build.lib.rules.cpp.CcLinkParamsProvider;
+import com.google.devtools.build.lib.rules.cpp.CppCompilationContext;
 import com.google.devtools.build.lib.rules.objc.CompilationSupport.ExtraLinkArgs;
 import com.google.devtools.build.lib.rules.objc.ObjcCommon.CompilationAttributes;
 import com.google.devtools.build.lib.rules.objc.ObjcCommon.ResourceAttributes;
@@ -64,7 +66,6 @@ abstract class BinaryLinkingTargetFactory implements RuleConfiguredTargetFactory
   @Override
   public final ConfiguredTarget create(RuleContext ruleContext) throws InterruptedException {
     ObjcCommon common = common(ruleContext);
-    OptionsProvider optionsProvider = optionsProvider(ruleContext);
 
     ObjcProvider objcProvider = common.getObjcProvider();
     if (!hasLibraryOrSources(objcProvider)) {
@@ -80,9 +81,9 @@ abstract class BinaryLinkingTargetFactory implements RuleConfiguredTargetFactory
         .add(intermediateArtifacts.singleArchitectureBinary());
 
     new CompilationSupport(ruleContext)
-        .registerJ2ObjcCompileAndArchiveActions(optionsProvider, objcProvider)
-        .registerCompileAndArchiveActions(common, optionsProvider)
-        .addXcodeSettings(xcodeProviderBuilder, common, optionsProvider)
+        .registerJ2ObjcCompileAndArchiveActions(objcProvider)
+        .registerCompileAndArchiveActions(common)
+        .addXcodeSettings(xcodeProviderBuilder, common)
         .registerLinkActions(objcProvider, extraLinkArgs, ImmutableList.<Artifact>of())
         .validateAttributes();
 
@@ -93,9 +94,8 @@ abstract class BinaryLinkingTargetFactory implements RuleConfiguredTargetFactory
         ObjcConfiguration objcConfiguration = ObjcRuleClasses.objcConfiguration(ruleContext);
         // TODO(bazel-team): Remove once all bundle users are migrated to ios_application.
         ReleaseBundlingSupport releaseBundlingSupport = new ReleaseBundlingSupport(
-            ruleContext, objcProvider, optionsProvider,
-            LinkedBinary.LOCAL_AND_DEPENDENCIES, ReleaseBundlingSupport.APP_BUNDLE_DIR_FORMAT,
-            objcConfiguration.getMinimumOs());
+            ruleContext, objcProvider, LinkedBinary.LOCAL_AND_DEPENDENCIES,
+            ReleaseBundlingSupport.APP_BUNDLE_DIR_FORMAT, objcConfiguration.getMinimumOs());
         releaseBundlingSupport
             .registerActions()
             .addXcodeSettings(xcodeProviderBuilder)
@@ -138,30 +138,20 @@ abstract class BinaryLinkingTargetFactory implements RuleConfiguredTargetFactory
     XcodeProvider xcodeProvider = xcodeProviderBuilder.build();
     xcodeSupport.registerActions(xcodeProvider);
 
-    // TODO(bazel-team): Stop exporting an XcTestAppProvider once objc_binary no longer creates an
-    // application bundle.
-    RuleConfiguredTargetBuilder target = common.configuredTargetBuilder(
-        filesToBuild.build(),
-        Optional.of(xcodeProvider),
-        Optional.of(objcProvider),
-        xcTestAppProvider,
-        Optional.<J2ObjcSrcsProvider>absent());
-    for (RunfilesSupport runfilesSupport : maybeRunfilesSupport.asSet()) {
-      target.setRunfilesSupport(runfilesSupport, runfilesSupport.getExecutable());
+    RuleConfiguredTargetBuilder targetBuilder =
+        ObjcRuleClasses.ruleConfiguredTarget(ruleContext, filesToBuild.build())
+            .addProvider(XcodeProvider.class, xcodeProvider)
+            .addProvider(ObjcProvider.class, objcProvider);
+    if (xcTestAppProvider.isPresent()) {
+      // TODO(bazel-team): Stop exporting an XcTestAppProvider once objc_binary no longer creates an
+      // application bundle.
+      targetBuilder.addProvider(XcTestAppProvider.class, xcTestAppProvider.get());
     }
-    return target.build();
-  }
-
-  private OptionsProvider optionsProvider(RuleContext ruleContext) {
-    OptionsProvider.Builder provider = new OptionsProvider.Builder()
-        .addCopts(ruleContext.getTokenizedStringListAttr("copts"))
-        .addTransitive(Optional.fromNullable(
-            ruleContext.getPrerequisite("options", Mode.TARGET, OptionsProvider.class)));
-    if (hasReleaseBundlingSupport == HasReleaseBundlingSupport.YES) {
-        provider
-            .addInfoplists(ruleContext.getPrerequisiteArtifacts("infoplist", Mode.TARGET).list());
+    if (maybeRunfilesSupport.isPresent()) {
+      RunfilesSupport runfilesSupport = maybeRunfilesSupport.get();
+      targetBuilder.setRunfilesSupport(runfilesSupport, runfilesSupport.getExecutable());
     }
-    return provider.build();
+    return targetBuilder.build();
   }
 
   private boolean hasLibraryOrSources(ObjcProvider objcProvider) {
@@ -175,12 +165,16 @@ abstract class BinaryLinkingTargetFactory implements RuleConfiguredTargetFactory
     CompilationArtifacts compilationArtifacts =
         CompilationSupport.compilationArtifacts(ruleContext);
 
-    return new ObjcCommon.Builder(ruleContext)
+    ObjcCommon.Builder builder = new ObjcCommon.Builder(ruleContext)
         .setCompilationAttributes(new CompilationAttributes(ruleContext))
         .setResourceAttributes(new ResourceAttributes(ruleContext))
         .setCompilationArtifacts(compilationArtifacts)
         .addDefines(ruleContext.getTokenizedStringListAttr("defines"))
         .addDepObjcProviders(ruleContext.getPrerequisites("deps", Mode.TARGET, ObjcProvider.class))
+        .addDepCcHeaderProviders(
+            ruleContext.getPrerequisites("deps", Mode.TARGET, CppCompilationContext.class))
+        .addDepCcLinkProviders(
+            ruleContext.getPrerequisites("deps", Mode.TARGET, CcLinkParamsProvider.class))
         .addDepObjcProviders(
             ruleContext.getPrerequisites("bundles", Mode.TARGET, ObjcProvider.class))
         .addNonPropagatedDepObjcProviders(
@@ -188,7 +182,12 @@ abstract class BinaryLinkingTargetFactory implements RuleConfiguredTargetFactory
         .setIntermediateArtifacts(intermediateArtifacts)
         .setAlwayslink(false)
         .addExtraImportLibraries(ObjcRuleClasses.j2ObjcLibraries(ruleContext))
-        .setLinkedBinary(intermediateArtifacts.singleArchitectureBinary())
-        .build();
+        .setLinkedBinary(intermediateArtifacts.singleArchitectureBinary());
+
+    if (ObjcRuleClasses.objcConfiguration(ruleContext).generateDebugSymbols()) {
+      builder.setBreakpadFile(intermediateArtifacts.breakpadSym());
+    }
+
+    return builder.build();
   }
 }

@@ -60,6 +60,7 @@ java_library(
 java_library(
     name = "options",
     srcs = glob(["com/google/devtools/common/options/*.java"]),
+    visibility = ["//visibility:public"],
     deps = [
         "//third_party:guava",
         "//third_party:jsr305",
@@ -86,29 +87,40 @@ java_library(
 )
 
 java_library(
+    name = "events",
+    srcs = glob(["com/google/devtools/build/lib/events/*.java"]),
+    deps = [
+        ":common",
+        ":concurrent",
+        ":vfs",
+        "//third_party:guava",
+        "//third_party:jsr305",
+    ],
+)
+
+java_library(
     name = "bazel-core",
     srcs = glob(
         [
+            "com/google/devtools/build/docgen/**/*.java",
+            "com/google/devtools/build/lib/actions/**",
+            "com/google/devtools/build/lib/analysis/**",
+            "com/google/devtools/build/lib/bazel/**/*.java",
+            "com/google/devtools/build/lib/buildtool/**",
+            "com/google/devtools/build/lib/cmdline/**",
             "com/google/devtools/build/lib/exec/**",
-            "com/google/devtools/build/lib/server/**",
-            "com/google/devtools/build/lib/server/**",
+            "com/google/devtools/build/lib/graph/**",
+            "com/google/devtools/build/lib/packages/**",
             "com/google/devtools/build/lib/pkgcache/**",
             "com/google/devtools/build/lib/query2/**",
-            "com/google/devtools/build/lib/bazel/**/*.java",
-            "com/google/devtools/build/lib/actions/**",
-            "com/google/devtools/build/lib/graph/**",
-            "com/google/devtools/build/lib/cmdline/**",
-            "com/google/devtools/build/lib/skyframe/**",
-            "com/google/devtools/build/lib/webstatusserver/**/*.java",
-            "com/google/devtools/build/lib/analysis/**",
-            "com/google/devtools/build/lib/events/**",
             "com/google/devtools/build/lib/rules/**",
-            "com/google/devtools/build/lib/syntax/**",
-            "com/google/devtools/build/docgen/**/*.java",
-            "com/google/devtools/build/lib/packages/**",
             "com/google/devtools/build/lib/runtime/**/*.java",
+            "com/google/devtools/build/lib/server/**",
+            "com/google/devtools/build/lib/skyframe/**",
             "com/google/devtools/build/lib/standalone/**",
-            "com/google/devtools/build/lib/buildtool/**",
+            "com/google/devtools/build/lib/syntax/**",
+            "com/google/devtools/build/lib/webstatusserver/**/*.java",
+            "com/google/devtools/build/lib/worker/**",
             "com/google/devtools/build/skyframe/**",
         ],
         exclude = [
@@ -120,7 +132,10 @@ java_library(
         "com/google/devtools/build/lib/**/*.html",
         "com/google/devtools/build/lib/**/*.css",
         "com/google/devtools/build/lib/**/*.js",
-    ]),
+    ]) + [
+        "//third_party:d3-js",
+        "//third_party:jquery",
+    ],
     visibility = ["//src/test/java:__subpackages__"],
     runtime_deps = [
         "//third_party:aether",
@@ -135,6 +150,7 @@ java_library(
         ":collect",
         ":common",
         ":concurrent",
+        ":events",
         ":options",
         ":shell",
         ":unix",
@@ -144,10 +160,13 @@ java_library(
         "//src/main/protobuf:proto_crosstool_config",
         "//src/main/protobuf:proto_extra_actions_base",
         "//src/main/protobuf:proto_test_status",
+        "//src/main/protobuf:proto_worker_protocol",
         "//src/main/protobuf:proto_xcodegen",
-        "//src/tools/xcode-common",
+        "//src/tools/xcode-common/java/com/google/devtools/build/xcode/common",
+        "//src/tools/xcode-common/java/com/google/devtools/build/xcode/util",
         "//third_party:aether",
         "//third_party:apache_commons_compress",
+        "//third_party:apache_commons_pool2",
         "//third_party:auto_value",
         "//third_party:gson",
         "//third_party:guava",
@@ -261,4 +280,15 @@ genrule(
     outs = ["skylark-library.html"],
     cmd = "$(location :skydoc_bin) $@",
     tools = [":skydoc_bin"],
+)
+
+#
+# Bootstrapping SingleJar using Skylark rules
+#
+load("/tools/build_rules/java_rules_skylark", "bootstrap_java_library")
+
+bootstrap_java_library(
+    name = "shell-skylark",
+    srcs = glob(["com/google/devtools/build/lib/shell/*.java"]),
+    jars = ["//third_party:guava"],
 )

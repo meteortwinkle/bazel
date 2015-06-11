@@ -233,25 +233,19 @@ public class Package implements Serializable {
   }
 
   private void writeObject(ObjectOutputStream out) {
-    com.google.devtools.build.lib.query2.proto.proto2api.Build.Package pb =
-        PackageSerializer.serializePackage(this);
     try {
-      pb.writeDelimitedTo(out);
-    } catch (IOException e) {
-      throw new IllegalStateException(e);
+      PackageSerializer.serializePackage(this, out);
+    } catch (IOException ioe) {
+      throw new IllegalStateException(ioe);
     }
   }
 
   private void readObject(ObjectInputStream in) throws IOException {
-    com.google.devtools.build.lib.query2.proto.proto2api.Build.Package pb =
-        com.google.devtools.build.lib.query2.proto.proto2api.Build.Package.parseDelimitedFrom(in);
-    Package pkg;
     try {
-      pkg = new PackageDeserializer(null, null).deserialize(pb);
+      deserializedPkg = new PackageDeserializer(null, null).deserialize(in);
     } catch (PackageDeserializationException e) {
       throw new IllegalStateException(e);
     }
-    deserializedPkg = pkg;
   }
 
   protected Object readResolve() {
@@ -750,7 +744,8 @@ public class Package implements Serializable {
 
     /**
      * Removes a target from the {@link Package} under construction. Intended to be used only by
-     * {@link PackageFunction} to remove targets whose labels cross subpackage boundaries.
+     * {@link com.google.devtools.build.lib.skyframe.PackageFunction} to remove targets whose
+     * labels cross subpackage boundaries.
      */
     public void removeTarget(Target target) {
       if (target.getPackage() == pkg) {
@@ -760,8 +755,9 @@ public class Package implements Serializable {
 
     /**
      * Returns the glob patterns requested by {@link PackageFactory} during evaluation of this
-     * package's BUILD file. Intended to be used only by {@link PackageFunction} to mark the
-     * appropriate Skyframe dependencies after the fact.
+     * package's BUILD file. Intended to be used only by
+     * {@link com.google.devtools.build.lib.skyframe.PackageFunction} to mark the appropriate
+     * Skyframe dependencies after the fact.
      */
     public Set<Pair<String, Boolean>> getGlobPatterns() {
       return globber.getGlobPatterns();
@@ -1304,7 +1300,7 @@ public class Package implements Serializable {
       return this;
     }
 
-    /** Intended to be used only by {@link PackageFunction}. */
+    /** Intended for use by {@link com.google.devtools.build.lib.skyframe.PackageFunction} only. */
     public Builder buildPartial() {
       if (alreadyBuilt) {
         return this;
@@ -1312,7 +1308,7 @@ public class Package implements Serializable {
       return beforeBuild();
     }
 
-    /** Intended to be used only by {@link PackageFunction}. */
+    /** Intended for use by {@link com.google.devtools.build.lib.skyframe.PackageFunction} only. */
     public Package finishBuild() {
       if (alreadyBuilt) {
         return pkg;

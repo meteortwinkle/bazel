@@ -135,8 +135,10 @@ public final class QueryCommand implements BlazeCommand {
     // 3. Output results:
     PrintStream output = new PrintStream(runtime.getReporter().getOutErr().getOutputStream());
     try {
-      QueryOutputUtils.output(queryOptions, result, formatter, output);
-    } catch (ClosedByInterruptException e) {
+      QueryOutputUtils.output(queryOptions, result, formatter, output,
+          queryOptions.aspectDeps.createResolver(
+              runtime.getPackageManager(), runtime.getReporter()));
+    } catch (ClosedByInterruptException | InterruptedException e) {
       runtime.getReporter().handle(Event.error("query interrupted"));
       return ExitCode.INTERRUPTED;
     } catch (IOException e) {

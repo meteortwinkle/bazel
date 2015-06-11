@@ -16,8 +16,11 @@ package com.google.devtools.build.lib.bazel.repository;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Ascii;
+import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
+import com.google.common.hash.Hasher;
+import com.google.common.hash.Hashing;
 import com.google.devtools.build.lib.analysis.RuleDefinition;
 import com.google.devtools.build.lib.bazel.repository.DecompressorFactory.DecompressorException;
 import com.google.devtools.build.lib.bazel.repository.DecompressorFactory.JarDecompressor;
@@ -56,8 +59,9 @@ import org.eclipse.aether.transport.file.FileTransporterFactory;
 import org.eclipse.aether.transport.http.HttpTransporterFactory;
 
 import java.io.IOException;
-import java.util.Arrays;
 import java.util.List;
+
+import javax.annotation.Nullable;
 
 /**
  * Implementation of maven_jar.
@@ -80,15 +84,7 @@ public class MavenJarFunction extends HttpArchiveFunction {
   MavenDownloader createMavenDownloader(AttributeMap mapper) {
     String name = mapper.getName();
     Path outputDirectory = getExternalRepositoryDirectory().getRelative(name);
-    MavenDownloader downloader = new MavenDownloader(name, mapper.get("group_id", Type.STRING),
-        mapper.get("artifact_id", Type.STRING), mapper.get("version", Type.STRING),
-        outputDirectory);
-
-    List<String> repositories = mapper.get("repositories", Type.STRING_LIST);
-    if (repositories != null && !repositories.isEmpty()) {
-      downloader.setRepositories(repositories);
-    }
-
+    MavenDownloader downloader = new MavenDownloader(name, mapper, outputDirectory);
     return downloader;
   }
 
@@ -149,18 +145,36 @@ public class MavenJarFunction extends HttpArchiveFunction {
     private final String artifactId;
     private final String version;
     private final Path outputDirectory;
-    private List<RemoteRepository> repositories;
+    @Nullable
+    private final String sha1;
+    // TODO(kchodorow): change this to a single repository on 9/15.
+    private final List<RemoteRepository> repositories;
 
-    MavenDownloader(String name, String groupId, String artifactId, String version,
-        Path outputDirectory) {
+    public MavenDownloader(String name, AttributeMap mapper, Path outputDirectory) {
       this.name = name;
-      this.groupId = groupId;
-      this.artifactId = artifactId;
-      this.version = version;
+      this.groupId = mapper.get("group_id", Type.STRING);
+      this.artifactId = mapper.get("artifact_id", Type.STRING);
+      this.version = mapper.get("version", Type.STRING);
       this.outputDirectory = outputDirectory;
-      repositories = Arrays.asList(
-          new RemoteRepository.Builder("central", "default", MAVEN_CENTRAL_URL).build());
-      this.repositories = ImmutableList.copyOf(repositories);
+      this.sha1 = (mapper.has("sha1", Type.STRING)) ? mapper.get("sha1", Type.STRING) : null;
+
+      if (mapper.has("repository", Type.STRING)
+          && !mapper.get("repository", Type.STRING).isEmpty()) {
+        this.repositories = ImmutableList.of(new RemoteRepository.Builder(
+            "user-defined repository", "default", mapper.get("repository", Type.STRING)).build());
+      } else if (mapper.has("repositories", Type.STRING_LIST)
+          && !mapper.get("repositories", Type.STRING_LIST).isEmpty()) {
+        // TODO(kchodorow): remove after 9/15, uses deprecated list of repositories attribute.
+        this.repositories = Lists.newArrayList();
+        for (String repositoryUrl : mapper.get("repositories", Type.STRING_LIST)) {
+          this.repositories.add(new RemoteRepository.Builder(
+              "user-defined repository " + repositories.size(), "default", repositoryUrl).build());
+        }
+      } else {
+        this.repositories = Lists.newArrayList();
+        this.repositories.add(new RemoteRepository.Builder(
+            "central", "default", MAVEN_CENTRAL_URL).build());
+      }
     }
 
     /**
@@ -175,17 +189,6 @@ public class MavenJarFunction extends HttpArchiveFunction {
      */
     public Path getOutputDirectory() {
       return outputDirectory;
-    }
-
-    /**
-     * Customizes the set of Maven repositories to check.  Takes a list of repository URLs.
-     */
-    public void setRepositories(List<String> repositories) {
-      this.repositories = Lists.newArrayList();
-      for (String repositoryUrl : repositories) {
-        this.repositories.add(new RemoteRepository.Builder(
-            "user-defined repository " + repositories.size(), "default", repositoryUrl).build());
-      }
     }
 
     /**
@@ -206,7 +209,18 @@ public class MavenJarFunction extends HttpArchiveFunction {
       } catch (ArtifactResolutionException e) {
         throw new IOException("Failed to fetch Maven dependency: " + e.getMessage());
       }
-      return outputDirectory.getRelative(artifact.getFile().getAbsolutePath());
+
+      Path downloadPath = outputDirectory.getRelative(artifact.getFile().getAbsolutePath());
+      // Verify checksum.
+      if (!Strings.isNullOrEmpty(sha1)) {
+        Hasher hasher = Hashing.sha1().newHasher();
+        String downloadSha1 = HttpDownloader.getHash(hasher, downloadPath);
+        if (!sha1.equals(downloadSha1)) {
+          throw new IOException("Downloaded file at " + downloadPath + " has SHA-1 of "
+              + downloadSha1 + ", does not match expected SHA-1 (" + sha1 + ")");
+        }
+      }
+      return downloadPath;
     }
 
     private RepositorySystemSession newRepositorySystemSession(RepositorySystem system) {

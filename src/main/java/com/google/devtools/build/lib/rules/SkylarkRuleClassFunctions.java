@@ -26,6 +26,7 @@ import static com.google.devtools.build.lib.syntax.SkylarkType.castList;
 import static com.google.devtools.build.lib.syntax.SkylarkType.castMap;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Preconditions;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.CacheLoader;
 import com.google.common.cache.LoadingCache;
@@ -77,7 +78,6 @@ import java.util.concurrent.ExecutionException;
 
 /**
  * A helper class to provide an easier API for Skylark rule definitions.
- * This is experimental code.
  */
 public class SkylarkRuleClassFunctions {
 
@@ -195,7 +195,11 @@ public class SkylarkRuleClassFunctions {
             "dictionary to declare all the attributes of the rule. It maps from an attribute name "
             + "to an attribute object (see <a href=\"#modules.attr\">attr</a> module). "
             + "Attributes starting with <code>_</code> are private, and can be used to add "
-            + "an implicit dependency on a label."),
+            + "an implicit dependency on a label. The attribute <code>name</code> is implicitly "
+            + "added and must not be specified. Attributes <code>visibility</code>, "
+            + "<code>deprecation</code>, <code>tags</code>, <code>testonly</code>, and "
+            + "<code>features</code> are implicitly added and might be overriden."),
+            // TODO(bazel-team): need to give the types of these builtin attributes
         @Param(name = "outputs", type = Map.class, callbackEnabled = true, noneable = true,
             defaultValue = "None", doc = "outputs of this rule. "
             + "It is a dictionary mapping from string to a template name. "
@@ -219,6 +223,7 @@ public class SkylarkRuleClassFunctions {
           FuncallExpression ast, Environment funcallEnv)
            throws EvalException, ConversionException {
 
+        Preconditions.checkState(funcallEnv instanceof SkylarkEnvironment);
         RuleClassType type = test ? RuleClassType.TEST : RuleClassType.NORMAL;
 
         // We'll set the name later, pass the empty string for now.
@@ -243,11 +248,6 @@ public class SkylarkRuleClassFunctions {
           builder.setOutputsDefaultExecutable();
         }
 
-        if (!(funcallEnv instanceof SkylarkEnvironment)) {
-          System.out.println("rule called from non-Skylark environment!");
-          // throw new EvaluationException("rule not accessible at the toplevel");
-        }
-
         if (implicitOutputs != Environment.NONE) {
           if (implicitOutputs instanceof BaseFunction) {
             BaseFunction func = (BaseFunction) implicitOutputs;
@@ -267,7 +267,8 @@ public class SkylarkRuleClassFunctions {
         }
 
         builder.setConfiguredTargetFunction(implementation);
-        builder.setRuleDefinitionEnvironment((SkylarkEnvironment) funcallEnv);
+        builder.setRuleDefinitionEnvironment(
+            ((SkylarkEnvironment) funcallEnv).getGlobalEnvironment());
         return new RuleFunction(builder, type);
         }
       };

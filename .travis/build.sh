@@ -22,16 +22,12 @@ if [ -z "${TRAVIS_OS_NAME+x}" ]; then
 fi
 
 if [[ $TRAVIS_OS_NAME = 'osx' ]]; then
-    brew install protobuf libarchive
-    /usr/libexec/java_home 1.7+
-    export JAVA_HOME=$(/usr/libexec/java_home 1.7+)
-    ls -l $JAVA_HOME
+    # TODO(dmarting) ./compile.sh all
 else
     sudo apt-get update -qq
-    sudo apt-get install -y protobuf-compiler libarchive-dev netcat-traditional
+    sudo apt-get install -y netcat-traditional
     sudo update-alternatives --set nc /bin/nc.traditional
     export JAVA_HOME=/usr/lib/jvm/java-8-oracle
     export JAVA_OPTS="-Xmx3000m"
+    ./compile.sh all
 fi
-
-./bootstrap_test.sh all

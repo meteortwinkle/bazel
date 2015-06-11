@@ -46,6 +46,7 @@ import com.google.devtools.build.lib.actions.MapBasedActionGraph;
 import com.google.devtools.build.lib.actions.MutableActionGraph;
 import com.google.devtools.build.lib.actions.MutableActionGraph.ActionConflictException;
 import com.google.devtools.build.lib.actions.NotifyOnActionCacheHit;
+import com.google.devtools.build.lib.actions.PackageRootResolutionException;
 import com.google.devtools.build.lib.actions.PackageRootResolver;
 import com.google.devtools.build.lib.actions.ResourceManager;
 import com.google.devtools.build.lib.actions.ResourceSet;
@@ -65,6 +66,7 @@ import com.google.devtools.build.lib.util.io.OutErr;
 import com.google.devtools.build.lib.vfs.Path;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import com.google.devtools.build.lib.vfs.Symlinks;
+import com.google.devtools.build.skyframe.SkyFunction.Environment;
 import com.google.protobuf.ByteString;
 
 import java.io.IOException;
@@ -507,7 +509,8 @@ public final class SkyframeActionExecutor {
   }
 
   @Nullable
-  Iterable<Artifact> getActionCachedInputs(Action action, PackageRootResolver resolver) {
+  Iterable<Artifact> getActionCachedInputs(Action action, PackageRootResolver resolver)
+      throws PackageRootResolutionException {
     return actionCacheChecker.getCachedInputs(action, resolver);
   }
 
@@ -517,8 +520,16 @@ public final class SkyframeActionExecutor {
    * <p>This method is just a wrapper around {@link Action#discoverInputs} that properly processes
    * any ActionExecutionException thrown before rethrowing it to the caller.
    */
-  Collection<Artifact> discoverInputs(Action action, ActionExecutionContext actionExecutionContext)
+  Collection<Artifact> discoverInputs(Action action, PerActionFileCache graphFileCache,
+      MetadataHandler metadataHandler, Environment env)
       throws ActionExecutionException, InterruptedException {
+    ActionExecutionContext actionExecutionContext =
+        ActionExecutionContext.forInputDiscovery(
+            executorEngine,
+            new DelegatingPairFileCache(graphFileCache, perBuildFileCache),
+            metadataHandler,
+            actionLogBufferPathGenerator.generate(),
+            env);
     try {
       return action.discoverInputs(actionExecutionContext);
     } catch (ActionExecutionException e) {
@@ -1043,7 +1054,7 @@ public final class SkyframeActionExecutor {
     private final ActionInputFileCache perActionCache;
     private final ActionInputFileCache perBuildFileCache;
 
-    private DelegatingPairFileCache(ActionInputFileCache mainCache,
+    private DelegatingPairFileCache(PerActionFileCache mainCache,
         ActionInputFileCache perBuildFileCache) {
       this.perActionCache = mainCache;
       this.perBuildFileCache = perBuildFileCache;
@@ -1053,6 +1064,12 @@ public final class SkyframeActionExecutor {
     public ByteString getDigest(ActionInput actionInput) throws IOException {
       ByteString digest = perActionCache.getDigest(actionInput);
       return digest != null ? digest : perBuildFileCache.getDigest(actionInput);
+    }
+
+    @Override
+    public boolean isFile(Artifact input) {
+      // PerActionCache must have a value for all artifacts.
+      return perActionCache.isFile(input);
     }
 
     @Override

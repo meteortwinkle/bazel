@@ -1,12 +1,5 @@
 # Packaging
 
-genrule(
-    name = "client-info-file",
-    outs = ["client_info"],
-    cmd = "touch $@",
-    executable = 1,
-)
-
 md5_cmd = "set -e -o pipefail && cat $(SRCS) | %s | awk '{ print $$1; }' > $@"
 
 # TODO(bazel-team): find a better way to handle dylib extensions.
@@ -27,8 +20,7 @@ genrule(
         ":libunix",
         "//src/main/tools:build-runfiles",
         "//src/main/tools:process-wrapper",
-        ":namespace-sandbox",
-        "client_info",
+        "//src/main/tools:namespace-sandbox",
         "//src/main/tools:build_interface_so",
     ],
     outs = ["install_base_key"],
@@ -38,10 +30,31 @@ genrule(
     }),
 )
 
+# Try to grab the java version from the java_toolchain.
+# Unfortunately, we don't the javac options so we cannot get it from
+# the command-line options.
+genquery(
+    name = "java_toolchain_content",
+    expression = "kind(java_toolchain, deps(//tools/defaults:java_toolchain))",
+    opts = ["--output=xml"],
+    scope = ["//tools/defaults:java_toolchain"],
+)
+
 genrule(
     name = "java-version",
+    srcs = [":java_toolchain_content"],
     outs = ["java.version"],
-    cmd = "echo 1.8 >$@",
+    cmd = """
+          VERSION_LINE=$$(cat $< | grep target_version);
+          JAVA_VERSION=$$(echo $${VERSION_LINE} | sed -E 's/.*value="([^"])".*/\\1/');
+          if [ -z "$${JAVA_VERSION}" ]; then
+            echo "1.8" >$@  # Java 8 is the default
+          elif [[ "$${JAVA_VERSION}" =~ ^[0-9]+$$ ]]; then
+            echo "1.$${JAVA_VERSION}" >$@  # Add 1. before 7 or 8
+          else
+            echo "$${JAVA_VERSION}" >$@
+          fi
+          """,
 )
 
 genrule(
@@ -55,15 +68,14 @@ genrule(
         "//src/main/tools:build-runfiles",
         "//src/main/tools:process-wrapper",
         "//src/main/tools:jdk-support",
-        ":namespace-sandbox",
-        "client_info",
+        "//src/main/tools:namespace-sandbox",
         "//src/main/tools:build_interface_so",
         "install_base_key",
         ":java-version",
     ],
     outs = ["package.zip"],
     # Terrible hack to remove timestamps in the zip file
-    cmd = "mkdir $(@D)/package-zip && " +
+    cmd = "mkdir -p $(@D)/package-zip && " +
           "cp $(SRCS) $(@D)/package-zip && " +
           "touch -t 198001010000.00 $(@D)/package-zip/* && " +
           "zip -qj $@ $(@D)/package-zip/* && " +
@@ -77,7 +89,7 @@ genrule(
         "package-zip",
     ],
     outs = ["bazel"],
-    cmd = "cat $(location //src/main/cpp:client) package-zip > $@ && zip -qA $@",
+    cmd = "cat $(location //src/main/cpp:client) $(location :package-zip) > $@ && zip -qA $@",
     executable = 1,
     output_to_bindir = 1,
     visibility = [
@@ -92,13 +104,6 @@ filegroup(
         "//src/java_tools/buildjar:JavaBuilder_deploy.jar",
         "//src/java_tools/singlejar:SingleJar_deploy.jar",
         "//third_party/ijar",
-    ],
-)
-
-filegroup(
-    name = "namespace-sandbox",
-    srcs = [
-        "//src/main/tools:namespace-sandbox",
     ],
 )
 

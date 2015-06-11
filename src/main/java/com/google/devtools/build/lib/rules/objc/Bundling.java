@@ -31,9 +31,12 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
 import com.google.devtools.build.lib.actions.Artifact;
+import com.google.devtools.build.lib.analysis.RuleConfiguredTarget.Mode;
+import com.google.devtools.build.lib.analysis.RuleContext;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.Immutable;
+import com.google.devtools.build.lib.packages.Type;
 import com.google.devtools.build.lib.vfs.PathFragment;
 
 import java.util.HashSet;
@@ -48,10 +51,9 @@ final class Bundling {
   static final class Builder {
     private String name;
     private String bundleDirFormat;
-    private ImmutableList.Builder<BundleableFile> extraBundleFilesBuilder =
-        new ImmutableList.Builder<>();
+    private ImmutableList.Builder<BundleableFile> bundleFilesBuilder = ImmutableList.builder();
     private ObjcProvider objcProvider;
-    private InfoplistMerging infoplistMerging;
+    private NestedSetBuilder<Artifact> infoplists = NestedSetBuilder.stableOrder();
     private IntermediateArtifacts intermediateArtifacts;
     private String primaryBundleId;
     private String fallbackBundleId;
@@ -78,7 +80,7 @@ final class Bundling {
     }
 
     public Builder addExtraBundleFiles(ImmutableList<BundleableFile> extraBundleFiles) {
-      this.extraBundleFilesBuilder.addAll(extraBundleFiles);
+      this.bundleFilesBuilder.addAll(extraBundleFiles);
       return this;
     }
 
@@ -87,8 +89,33 @@ final class Bundling {
       return this;
     }
 
-    public Builder setInfoplistMerging(InfoplistMerging infoplistMerging) {
-      this.infoplistMerging = infoplistMerging;
+    /**
+     * Adds an artifact representing an {@code Info.plist} as an input to this bundle's
+     * {@code Info.plist} (which is merged from any such added plists plus some additional
+     * information).
+     */
+    public Builder addInfoplistInput(Artifact infoplist) {
+      this.infoplists.add(infoplist);
+      return this;
+    }
+
+    /**
+     * Adds any info plists specified in the given rule's {@code infoplist} attribute as well as
+     * from its {@code options} as inputs to this bundle's {@code Info.plist} (which is merged from
+     * any such added plists plus some additional information).
+     */
+    public Builder addInfoplistInputFromRule(RuleContext ruleContext) {
+      if (ruleContext.attributes().has("options", Type.LABEL)) {
+        OptionsProvider optionsProvider = ruleContext
+            .getPrerequisite("options", Mode.TARGET, OptionsProvider.class);
+        if (optionsProvider != null) {
+          infoplists.addAll(optionsProvider.getInfoplists());
+        }
+      }
+      Artifact infoplist = ruleContext.getPrerequisiteArtifact("infoplist", Mode.TARGET);
+      if (infoplist != null) {
+        infoplists.add(infoplist);
+      }
       return this;
     }
 
@@ -124,12 +151,15 @@ final class Bundling {
       return artifacts.build();
     }
 
-    private NestedSet<Artifact> getMergeZips(Optional<Artifact> actoolzipOutput) {
-      NestedSetBuilder<Artifact> mergeZipBuilder = NestedSetBuilder.<Artifact>stableOrder()
-          .addAll(actoolzipOutput.asSet())
-          .addAll(Xcdatamodel.outputZips(
-              Xcdatamodels.xcdatamodels(intermediateArtifacts, objcProvider.get(XCDATAMODEL))))
-          .addTransitive(objcProvider.get(MERGE_ZIP));
+    private NestedSet<Artifact> mergeZips(Optional<Artifact> actoolzipOutput) {
+      NestedSetBuilder<Artifact> mergeZipBuilder =
+          NestedSetBuilder.<Artifact>stableOrder()
+              .addAll(actoolzipOutput.asSet())
+              .addAll(
+                  Xcdatamodel.outputZips(
+                      Xcdatamodels.xcdatamodels(
+                          intermediateArtifacts, objcProvider.get(XCDATAMODEL))))
+              .addTransitive(objcProvider.get(MERGE_ZIP));
       for (Artifact xibFile : objcProvider.get(XIB)) {
         mergeZipBuilder.add(intermediateArtifacts.compiledXibFileZip(xibFile));
       }
@@ -139,89 +169,158 @@ final class Bundling {
       return mergeZipBuilder.build();
     }
 
-    public Bundling build() {
-      Preconditions.checkNotNull(intermediateArtifacts, "intermediateArtifacts");
-
-      Optional<Artifact> actoolzipOutput = Optional.absent();
-      if (!Iterables.isEmpty(objcProvider.get(ASSET_CATALOG))) {
-        actoolzipOutput = Optional.of(intermediateArtifacts.actoolzipOutput());
+    private NestedSet<Artifact> bundleInfoplistInputs() {
+      if (objcProvider.hasAssetCatalogs()) {
+        infoplists.add(intermediateArtifacts.actoolPartialInfoplist());
       }
+      return infoplists.build();
+    }
 
+    private Optional<Artifact> bundleInfoplist(NestedSet<Artifact> bundleInfoplistInputs) {
+      if (bundleInfoplistInputs.isEmpty()) {
+        return Optional.absent();
+      }
+      if (needsToMerge(bundleInfoplistInputs, primaryBundleId, fallbackBundleId)) {
+        return Optional.of(intermediateArtifacts.mergedInfoplist());
+      }
+      return Optional.of(Iterables.getOnlyElement(bundleInfoplistInputs));
+    }
+
+    private Optional<Artifact> combinedArchitectureBinary() {
       Optional<Artifact> combinedArchitectureBinary = Optional.absent();
       if (!Iterables.isEmpty(objcProvider.get(LIBRARY))
           || !Iterables.isEmpty(objcProvider.get(IMPORTED_LIBRARY))) {
         combinedArchitectureBinary =
             Optional.of(intermediateArtifacts.combinedArchitectureBinary());
       }
+      return combinedArchitectureBinary;
+    }
 
-      NestedSet<Artifact> mergeZips = getMergeZips(actoolzipOutput);
+    private Optional<Artifact> actoolzipOutput() {
+      Optional<Artifact> actoolzipOutput = Optional.absent();
+      if (!Iterables.isEmpty(objcProvider.get(ASSET_CATALOG))) {
+        actoolzipOutput = Optional.of(intermediateArtifacts.actoolzipOutput());
+      }
+      return actoolzipOutput;
+    }
+
+    private NestedSet<BundleableFile> binaryStringsFiles() {
+      NestedSetBuilder<BundleableFile> binaryStringsBuilder = NestedSetBuilder.stableOrder();
+      for (Artifact stringsFile : objcProvider.get(STRINGS)) {
+        BundleableFile bundleFile =
+            new BundleableFile(
+                intermediateArtifacts.convertedStringsFile(stringsFile),
+                BundleableFile.flatBundlePath(stringsFile.getExecPath()));
+        binaryStringsBuilder.add(bundleFile);
+      }
+      return binaryStringsBuilder.build();
+    }
+
+    /**
+     * Filters files that would map to the same location in the bundle, adding only one copy to the
+     * set of files returned.
+     *
+     * <p>Files can have the same bundle path for various illegal reasons and errors are raised for
+     * that separately (see {@link BundleSupport#validateResources}). There are situations though
+     * where the same file exists multiple times (for example in multi-architecture builds) and
+     * would conflict when creating the bundle. In all these cases it shouldn't matter which one is
+     * included and this class will select the first one.
+     */
+    ImmutableList<BundleableFile> deduplicateByBundlePaths(
+        ImmutableList<BundleableFile> bundleFiles) {
+      ImmutableList.Builder<BundleableFile> deduplicated = ImmutableList.builder();
+      Set<String> bundlePaths = new HashSet<>();
+      for (BundleableFile bundleFile : bundleFiles) {
+        if (bundlePaths.add(bundleFile.getBundlePath())) {
+          deduplicated.add(bundleFile);
+        }
+      }
+      return deduplicated.build();
+    }
+
+    public Bundling build() {
+      Preconditions.checkNotNull(intermediateArtifacts, "intermediateArtifacts");
+
+      NestedSet<Artifact> bundleInfoplistInputs = bundleInfoplistInputs();
+      Optional<Artifact> bundleInfoplist = bundleInfoplist(bundleInfoplistInputs);
+      Optional<Artifact> actoolzipOutput = actoolzipOutput();
+      Optional<Artifact> combinedArchitectureBinary = combinedArchitectureBinary();
+      NestedSet<BundleableFile> binaryStringsFiles = binaryStringsFiles();
+      NestedSet<Artifact> mergeZips = mergeZips(actoolzipOutput);
+
+      bundleFilesBuilder.addAll(binaryStringsFiles).addAll(objcProvider.get(BUNDLE_FILE));
+      ImmutableList<BundleableFile> bundleFiles =
+          deduplicateByBundlePaths(bundleFilesBuilder.build());
+
       NestedSetBuilder<Artifact> bundleContentArtifactsBuilder =
           NestedSetBuilder.<Artifact>stableOrder()
               .addTransitive(nestedBundleContentArtifacts(objcProvider.get(NESTED_BUNDLE)))
               .addAll(combinedArchitectureBinary.asSet())
-              .addAll(infoplistMerging.getPlistWithEverything().asSet())
+              .addAll(bundleInfoplist.asSet())
               .addTransitive(mergeZips)
-              .addAll(BundleableFile.toArtifacts(objcProvider.get(BUNDLE_FILE)));
+              .addAll(BundleableFile.toArtifacts(binaryStringsFiles))
+              .addAll(BundleableFile.toArtifacts(bundleFiles));
 
-      Set<String> bundlePaths = new HashSet<>();
-      for (Artifact stringsFile : objcProvider.get(STRINGS)) {
-        Artifact binaryStrings = intermediateArtifacts.convertedStringsFile(stringsFile);
-        BundleableFile bundleFile = new BundleableFile(
-            binaryStrings, BundleableFile.flatBundlePath(stringsFile.getExecPath()));
-        if (bundlePaths.add(bundleFile.getBundlePath())) {
-          // Filter files that would map to the same location. Files can have the same bundle path
-          // for various illegal reasons and errors are raised for that separately. Otherwise we
-          // only want a single file for a mapping in the bundle. See
-          // ReleaseBundlingSupport.validateResources for details.
-          extraBundleFilesBuilder.add(bundleFile);
-          bundleContentArtifactsBuilder.add(binaryStrings);
-        }
-      }
-
-      ImmutableList<BundleableFile> extraBundleFiles = extraBundleFilesBuilder.build();
-
-      bundleContentArtifactsBuilder.addAll(BundleableFile.toArtifacts(extraBundleFiles));
-
-      return new Bundling(name, bundleDirFormat, combinedArchitectureBinary, extraBundleFiles,
-          objcProvider, infoplistMerging, actoolzipOutput, bundleContentArtifactsBuilder.build(),
-          mergeZips, primaryBundleId, fallbackBundleId, architecture, minimumOsVersion);
+      return new Bundling(
+          name,
+          bundleDirFormat,
+          combinedArchitectureBinary,
+          bundleFiles,
+          bundleInfoplist,
+          actoolzipOutput,
+          bundleContentArtifactsBuilder.build(),
+          mergeZips,
+          primaryBundleId,
+          fallbackBundleId,
+          architecture,
+          minimumOsVersion,
+          bundleInfoplistInputs,
+          objcProvider.get(NESTED_BUNDLE));
     }
+  }
+
+  private static boolean needsToMerge(
+      NestedSet<Artifact> bundleInfoplistInputs, String primaryBundleId, String fallbackBundleId) {
+    return primaryBundleId != null || fallbackBundleId != null
+        || Iterables.size(bundleInfoplistInputs) > 1;
   }
 
   private final String name;
   private final String architecture;
   private final String bundleDirFormat;
   private final Optional<Artifact> combinedArchitectureBinary;
-  private final ImmutableList<BundleableFile> extraBundleFiles;
-  private final ObjcProvider objcProvider;
-  private final InfoplistMerging infoplistMerging;
+  private final ImmutableList<BundleableFile> bundleFiles;
+  private final Optional<Artifact> bundleInfoplist;
   private final Optional<Artifact> actoolzipOutput;
   private final NestedSet<Artifact> bundleContentArtifacts;
   private final NestedSet<Artifact> mergeZips;
   private final String primaryBundleId;
   private final String fallbackBundleId;
   private final String minimumOsVersion;
+  private final NestedSet<Artifact> bundleInfoplistInputs;
+  private final NestedSet<Bundling> nestedBundlings;
 
   private Bundling(
       String name,
       String bundleDirFormat,
       Optional<Artifact> combinedArchitectureBinary,
-      ImmutableList<BundleableFile> extraBundleFiles,
-      ObjcProvider objcProvider,
-      InfoplistMerging infoplistMerging,
+      ImmutableList<BundleableFile> bundleFiles,
+      Optional<Artifact> bundleInfoplist,
       Optional<Artifact> actoolzipOutput,
       NestedSet<Artifact> bundleContentArtifacts,
       NestedSet<Artifact> mergeZips,
       String primaryBundleId,
       String fallbackBundleId,
       String architecture,
-      String minimumOsVersion) {
+      String minimumOsVersion,
+      NestedSet<Artifact> bundleInfoplistInputs,
+      NestedSet<Bundling> nestedBundlings) {
+    this.nestedBundlings = Preconditions.checkNotNull(nestedBundlings);
     this.name = Preconditions.checkNotNull(name);
     this.bundleDirFormat = Preconditions.checkNotNull(bundleDirFormat);
     this.combinedArchitectureBinary = Preconditions.checkNotNull(combinedArchitectureBinary);
-    this.extraBundleFiles = Preconditions.checkNotNull(extraBundleFiles);
-    this.objcProvider = Preconditions.checkNotNull(objcProvider);
-    this.infoplistMerging = Preconditions.checkNotNull(infoplistMerging);
+    this.bundleFiles = Preconditions.checkNotNull(bundleFiles);
+    this.bundleInfoplist = Preconditions.checkNotNull(bundleInfoplist);
     this.actoolzipOutput = Preconditions.checkNotNull(actoolzipOutput);
     this.bundleContentArtifacts = Preconditions.checkNotNull(bundleContentArtifacts);
     this.mergeZips = Preconditions.checkNotNull(mergeZips);
@@ -229,12 +328,13 @@ final class Bundling {
     this.primaryBundleId = primaryBundleId;
     this.architecture = Preconditions.checkNotNull(architecture);
     this.minimumOsVersion = Preconditions.checkNotNull(minimumOsVersion);
+    this.bundleInfoplistInputs = Preconditions.checkNotNull(bundleInfoplistInputs);
   }
 
   /**
    * The bundle directory. For apps, this would be {@code "Payload/TARGET_NAME.app"}, which is where
    * in the bundle zip archive every file is found, including the linked binary, nested bundles, and
-   * everything returned by {@link #getExtraBundleFiles()}.
+   * everything returned by {@link #getBundleFiles()}.
    */
   public String getBundleDir() {
     return String.format(bundleDirFormat, name);
@@ -257,27 +357,42 @@ final class Bundling {
   }
 
   /**
-   * Extra bundle files to include in the bundle which are not automatically deduced by the contents
-   * of the provider. These files are placed under the bundle root (possibly nested, of course,
-   * depending on the bundle path of the files).
+   * Bundle files to include in the bundle. These files are placed under the bundle root (possibly
+   * nested, of course, depending on the bundle path of the files).
    */
-  public ImmutableList<BundleableFile> getExtraBundleFiles() {
-    return extraBundleFiles;
+  public ImmutableList<BundleableFile> getBundleFiles() {
+    return bundleFiles;
   }
 
   /**
-   * The {@link ObjcProvider} for this bundle.
+   * Returns any bundles nested in this one.
    */
-  public ObjcProvider getObjcProvider() {
-    return objcProvider;
+  public NestedSet<Bundling> getNestedBundlings() {
+    return nestedBundlings;
   }
 
   /**
-   * Information on the Info.plist and its merge inputs for this bundle. Note that an infoplist is
-   * only included in the bundle if it has one or more merge inputs.
+   * Returns an artifact representing this bundle's {@code Info.plist} or {@link Optional#absent()}
+   * if this bundle has no info plist inputs.
    */
-  public InfoplistMerging getInfoplistMerging() {
-    return infoplistMerging;
+  public Optional<Artifact> getBundleInfoplist() {
+    return bundleInfoplist;
+  }
+
+  /**
+   * Returns all info plists that need to be merged into this bundle's {@link #getBundleInfoplist()
+   * info plist}.
+   */
+  public NestedSet<Artifact> getBundleInfoplistInputs() {
+    return bundleInfoplistInputs;
+  }
+
+  /**
+   * Returns {@code true} if this bundle requires merging of its {@link #getBundleInfoplist() info
+   * plist}.
+   */
+  public boolean needsToMergeInfoplist() {
+    return needsToMerge(bundleInfoplistInputs, primaryBundleId, fallbackBundleId);
   }
 
   /**

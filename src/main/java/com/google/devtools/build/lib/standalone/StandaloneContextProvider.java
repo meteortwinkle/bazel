@@ -65,19 +65,20 @@ public class StandaloneContextProvider implements ActionContextProvider {
   }
 
   @SuppressWarnings("unchecked")
-  private final ActionContext localSpawnStrategy;
+  private final ActionContext standaloneSpawnStrategy;
   private final ImmutableList<ActionContext> strategies;
   private final BlazeRuntime runtime;
 
   public StandaloneContextProvider(BlazeRuntime runtime, BuildRequest buildRequest) {
     boolean verboseFailures = buildRequest.getOptions(ExecutionOptions.class).verboseFailures;
 
-    localSpawnStrategy = new LocalSpawnStrategy(runtime.getExecRoot(), verboseFailures);
+    standaloneSpawnStrategy = new StandaloneSpawnStrategy(runtime.getExecRoot(), verboseFailures);
     this.runtime = runtime;
 
     TestActionContext testStrategy = new StandaloneTestStrategy(buildRequest,
         runtime.getStartupOptionsProvider(), runtime.getBinTools(), runtime.getClientEnv(),
         runtime.getWorkspace());
+
     Builder<ActionContext> strategiesBuilder = ImmutableList.builder();
     // order of strategies passed to builder is significant - when there are many strategies that
     // could potentially be used and a spawnActionContext doesn't specify which one it wants, the
@@ -89,15 +90,15 @@ public class StandaloneContextProvider implements ActionContextProvider {
           new LinuxSandboxedStrategy(runtime.getDirectories(), verboseFailures);
       strategiesBuilder.add(sandboxedLinuxStrategy);
     }
+
     strategiesBuilder.add(
-        localSpawnStrategy,
+        standaloneSpawnStrategy,
         new DummyIncludeScanningContext(),
         new LocalLinkStrategy(),
         testStrategy,
         new ExclusiveTestStrategy(testStrategy),
-        new LocalGccStrategy(buildRequest),
+        new LocalGccStrategy(),
         new FileWriteStrategy());
-
 
     this.strategies = strategiesBuilder.build();
   }
@@ -119,7 +120,8 @@ public class StandaloneContextProvider implements ActionContextProvider {
   }
 
   @Override
-  public void executionPhaseEnding()  {}
+  public void executionPhaseEnding() {
+  }
 }
 
 

@@ -19,6 +19,8 @@ import com.google.common.base.Preconditions;
 import com.google.common.base.Predicate;
 import com.google.common.base.Predicates;
 import com.google.common.base.Throwables;
+import com.google.common.cache.Cache;
+import com.google.common.cache.CacheBuilder;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
@@ -37,6 +39,7 @@ import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.actions.ArtifactFactory;
 import com.google.devtools.build.lib.actions.ArtifactOwner;
 import com.google.devtools.build.lib.actions.Executor;
+import com.google.devtools.build.lib.actions.PackageRootResolutionException;
 import com.google.devtools.build.lib.actions.ResourceManager;
 import com.google.devtools.build.lib.actions.Root;
 import com.google.devtools.build.lib.analysis.Aspect;
@@ -69,6 +72,7 @@ import com.google.devtools.build.lib.packages.Package;
 import com.google.devtools.build.lib.packages.PackageFactory;
 import com.google.devtools.build.lib.packages.PackageIdentifier;
 import com.google.devtools.build.lib.packages.Preprocessor;
+import com.google.devtools.build.lib.packages.RuleClassProvider;
 import com.google.devtools.build.lib.packages.RuleVisibility;
 import com.google.devtools.build.lib.packages.Target;
 import com.google.devtools.build.lib.pkgcache.FilteringPolicy;
@@ -118,7 +122,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.Callable;
-import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -157,13 +160,14 @@ public abstract class SkyframeExecutor implements WalkableGraphFactory {
       // performance.
       System.getenv("TEST_TMPDIR") == null ? 200 : 5;
 
-  // Stores Packages between reruns of the PackageFunction (because of missing dependencies,
-  // within the same evaluate() run) to avoid loading the same package twice (first time loading
-  // to find subincludes and declare value dependencies).
+  // Cache of partially constructed Package instances, stored between reruns of the PackageFunction
+  // (because of missing dependencies, within the same evaluate() run) to avoid loading the same
+  // package twice (first time loading to find subincludes and declare value dependencies).
   // TODO(bazel-team): remove this cache once we have skyframe-native package loading
   // [skyframe-loading]
-  private final ConcurrentMap<PackageIdentifier, Package.LegacyBuilder> packageFunctionCache =
-      Maps.newConcurrentMap();
+  private final Cache<PackageIdentifier, Package.LegacyBuilder> packageFunctionCache =
+      newPkgFunctionCache();
+
   private final AtomicInteger numPackagesLoaded = new AtomicInteger(0);
 
   protected SkyframeBuildView skyframeBuildView;
@@ -282,6 +286,7 @@ public abstract class SkyframeExecutor implements WalkableGraphFactory {
       Predicate<PathFragment> allowedMissingInputs) {
     ExternalFilesHelper externalFilesHelper = new ExternalFilesHelper(pkgLocator,
         immutableDirectories, errorOnExternalFiles);
+    RuleClassProvider ruleClassProvider = pkgFactory.getRuleClassProvider();
     // We use an immutable map builder for the nice side effect that it throws if a duplicate key
     // is inserted.
     ImmutableMap.Builder<SkyFunctionName, SkyFunction> map = ImmutableMap.builder();
@@ -296,23 +301,24 @@ public abstract class SkyframeExecutor implements WalkableGraphFactory {
     map.put(SkyFunctions.PACKAGE_LOOKUP, new PackageLookupFunction(deletedPackages));
     map.put(SkyFunctions.CONTAINING_PACKAGE_LOOKUP, new ContainingPackageLookupFunction());
     map.put(SkyFunctions.AST_FILE_LOOKUP, new ASTFileLookupFunction(
-        pkgLocator, packageManager, pkgFactory.getRuleClassProvider()));
+        pkgLocator, packageManager, ruleClassProvider));
     map.put(SkyFunctions.SKYLARK_IMPORTS_LOOKUP, new SkylarkImportLookupFunction(
-        pkgFactory.getRuleClassProvider(), pkgFactory));
+        ruleClassProvider, pkgFactory));
     map.put(SkyFunctions.GLOB, new GlobFunction());
     map.put(SkyFunctions.TARGET_PATTERN, new TargetPatternFunction(pkgLocator));
     map.put(SkyFunctions.PREPARE_DEPS_OF_PATTERNS, new PrepareDepsOfPatternsFunction());
     map.put(SkyFunctions.RECURSIVE_PKG, new RecursivePkgFunction());
     map.put(SkyFunctions.PACKAGE, new PackageFunction(
         reporter, pkgFactory, packageManager, showLoadingProgress, packageFunctionCache,
-        eventBus, numPackagesLoaded));
+        numPackagesLoaded));
     map.put(SkyFunctions.TARGET_MARKER, new TargetMarkerFunction());
-    map.put(SkyFunctions.TRANSITIVE_TARGET, new TransitiveTargetFunction());
+    map.put(SkyFunctions.TRANSITIVE_TARGET, new TransitiveTargetFunction(ruleClassProvider));
     map.put(SkyFunctions.CONFIGURED_TARGET,
         new ConfiguredTargetFunction(new BuildViewProvider()));
     map.put(SkyFunctions.ASPECT, new AspectFunction(new BuildViewProvider()));
     map.put(SkyFunctions.POST_CONFIGURED_TARGET,
         new PostConfiguredTargetFunction(new BuildViewProvider()));
+    map.put(SkyFunctions.BUILD_CONFIGURATION, new BuildConfigurationFunction(directories));
     map.put(SkyFunctions.CONFIGURATION_COLLECTION, new ConfigurationCollectionFunction(
         configurationFactory, configurationPackages));
     map.put(SkyFunctions.CONFIGURATION_FRAGMENT, new ConfigurationFragmentFunction(
@@ -422,13 +428,17 @@ public abstract class SkyframeExecutor implements WalkableGraphFactory {
    * factory methods and as an implementation detail of {@link #resetEvaluator}).
    */
   protected void init() {
-    progressReceiver = new SkyframeProgressReceiver();
+    progressReceiver = newSkyframeProgressReceiver();
     Map<SkyFunctionName, SkyFunction> skyFunctions = skyFunctions(
         directories.getBuildDataDirectory(), pkgFactory, allowedMissingInputs);
     memoizingEvaluator = evaluatorSupplier.create(
         skyFunctions, evaluatorDiffer(), progressReceiver, emittedEventState,
         hasIncrementalState());
     buildDriver = newBuildDriver();
+  }
+
+  protected SkyframeProgressReceiver newSkyframeProgressReceiver() {
+    return new SkyframeProgressReceiver();
   }
 
   /**
@@ -552,6 +562,10 @@ public abstract class SkyframeExecutor implements WalkableGraphFactory {
     }
   }
 
+  protected Cache<PackageIdentifier, Package.LegacyBuilder> newPkgFunctionCache() {
+    return CacheBuilder.newBuilder().build();
+  }
+
   /**
    * Injects the build info factory map that will be used when constructing build info
    * actions/artifacts. Unchanged across the life of the Blaze server, although it must be injected
@@ -588,7 +602,8 @@ public abstract class SkyframeExecutor implements WalkableGraphFactory {
   }
 
   // TODO(bazel-team): Make this take a PackageIdentifier.
-  public Map<PathFragment, Root> getArtifactRoots(Iterable<PathFragment> execPaths) {
+  public Map<PathFragment, Root> getArtifactRoots(Iterable<PathFragment> execPaths)
+      throws PackageRootResolutionException {
     final List<SkyKey> packageKeys = new ArrayList<>();
     for (PathFragment execPath : execPaths) {
       Preconditions.checkArgument(!execPath.isAbsolute(), execPath);
@@ -609,6 +624,11 @@ public abstract class SkyframeExecutor implements WalkableGraphFactory {
       });
     } catch (Exception e) {
       throw new IllegalStateException(e);  // Should never happen.
+    }
+
+    if (result.hasError()) {
+      throw new PackageRootResolutionException("Exception encountered determining package roots",
+          result.getError().getException());
     }
 
     Map<PathFragment, Root> roots = new HashMap<>();
@@ -735,8 +755,8 @@ public abstract class SkyframeExecutor implements WalkableGraphFactory {
    */
   @VisibleForTesting  // productionVisibility = Visibility.PRIVATE
   public void preparePackageLoading(PathPackageLocator pkgLocator, RuleVisibility defaultVisibility,
-      boolean showLoadingProgress,
-      String defaultsPackageContents, UUID commandId) {
+                                    boolean showLoadingProgress, int globbingThreads,
+                                    String defaultsPackageContents, UUID commandId) {
     Preconditions.checkNotNull(pkgLocator);
     setActive(true);
 
@@ -748,11 +768,12 @@ public abstract class SkyframeExecutor implements WalkableGraphFactory {
     setPackageLocator(pkgLocator);
 
     syscalls.set(new PerBuildSyscallCache());
+    this.pkgFactory.setGlobbingThreads(globbingThreads);
     checkPreprocessorFactory();
     emittedEventState.clear();
 
     // If the PackageFunction was interrupted, there may be stale entries here.
-    packageFunctionCache.clear();
+    packageFunctionCache.invalidateAll();
     numPackagesLoaded.set(0);
 
     // Reset the stateful SkyframeCycleReporter, which contains cycles from last run.
@@ -1277,7 +1298,7 @@ public abstract class SkyframeExecutor implements WalkableGraphFactory {
 
     /** Same as {@link PackageManager#partiallyClear}. */
     void partiallyClear() {
-      packageFunctionCache.clear();
+      packageFunctionCache.invalidateAll();
     }
   }
 
@@ -1328,7 +1349,7 @@ public abstract class SkyframeExecutor implements WalkableGraphFactory {
     preparePackageLoading(
         createPackageLocator(packageCacheOptions, directories.getWorkspace(), workingDirectory),
         packageCacheOptions.defaultVisibility, packageCacheOptions.showLoadingProgress,
-        defaultsPackageContents, commandId);
+        packageCacheOptions.globbingThreads, defaultsPackageContents, commandId);
     setDeletedPackages(ImmutableSet.copyOf(packageCacheOptions.deletedPackages));
 
     incrementalBuildMonitor = new SkyframeIncrementalBuildMonitor();
@@ -1345,7 +1366,8 @@ public abstract class SkyframeExecutor implements WalkableGraphFactory {
     return new CyclesReporter(
         new TransitiveTargetCycleReporter(packageManager),
         new ActionArtifactCycleReporter(packageManager),
-        new SkylarkModuleCycleReporter());
+        new SkylarkModuleCycleReporter(),
+        new ConfiguredTargetCycleReporter(packageManager));
   }
 
   CyclesReporter getCyclesReporter() {

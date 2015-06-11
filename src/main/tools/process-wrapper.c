@@ -22,7 +22,9 @@
 // die with raise(SIGTERM) even if the child process handles SIGTERM with
 // exit(0).
 
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE
+#endif
 
 #include <errno.h>
 #include <fcntl.h>
@@ -161,6 +163,15 @@ int main(int argc, char *argv[]) {
     // security/user-isolation.
     if (setreuid(euid, euid) != 0) {
       DIE("changing uid failed: setreuid");
+    }
+  }
+
+  int gid = getgid();
+  int egid = getegid();
+  if (gid != egid) {
+    // Switch completely to the target gid.
+    if (setregid(egid, egid) != 0) {
+      DIE("changing gid failed: setregid");
     }
   }
 

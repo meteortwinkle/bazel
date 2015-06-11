@@ -72,8 +72,8 @@ public abstract class ReleaseBundlingTargetFactory implements RuleConfiguredTarg
     NestedSetBuilder<Artifact> filesToBuild = NestedSetBuilder.stableOrder();
 
     ReleaseBundlingSupport releaseBundlingSupport = new ReleaseBundlingSupport(
-        ruleContext, common.getObjcProvider(), optionsProvider(ruleContext),
-        LinkedBinary.DEPENDENCIES_ONLY, bundleDirFormat, bundleMinimumOsVersion(ruleContext));
+        ruleContext, common.getObjcProvider(), LinkedBinary.DEPENDENCIES_ONLY, bundleDirFormat,
+        bundleMinimumOsVersion(ruleContext));
     releaseBundlingSupport
         .registerActions()
         .addXcodeSettings(xcodeProviderBuilder)
@@ -103,14 +103,15 @@ public abstract class ReleaseBundlingTargetFactory implements RuleConfiguredTarg
       exposedObjcProvider = Optional.absent();
     }
 
-    RuleConfiguredTargetBuilder target = common.configuredTargetBuilder(
-        filesToBuild.build(),
-        Optional.of(xcodeProviderBuilder.build()),
-        exposedObjcProvider,
-        Optional.of(releaseBundlingSupport.xcTestAppProvider()),
-        Optional.<J2ObjcSrcsProvider>absent());
-    configureTarget(target, ruleContext, releaseBundlingSupport);
-    return target.build();
+    RuleConfiguredTargetBuilder targetBuilder =
+        ObjcRuleClasses.ruleConfiguredTarget(ruleContext, filesToBuild.build())
+            .addProvider(XcTestAppProvider.class, releaseBundlingSupport.xcTestAppProvider())
+            .addProvider(XcodeProvider.class, xcodeProviderBuilder.build());
+    if (exposedObjcProvider.isPresent()) {
+      targetBuilder.addProvider(ObjcProvider.class, exposedObjcProvider.get());
+    }
+    configureTarget(targetBuilder, ruleContext, releaseBundlingSupport);
+    return targetBuilder.build();
   }
 
   /**
@@ -121,11 +122,6 @@ public abstract class ReleaseBundlingTargetFactory implements RuleConfiguredTarg
   protected String bundleMinimumOsVersion(RuleContext ruleContext) {
     return ObjcRuleClasses.objcConfiguration(ruleContext).getMinimumOs();
   }
-
-  /**
-   * Returns a provider based on this rule's options and those of its option-providing dependencies.
-   */
-  protected abstract OptionsProvider optionsProvider(RuleContext ruleContext);
 
   /**
    * Performs additional configuration of the target. The default implementation does nothing, but

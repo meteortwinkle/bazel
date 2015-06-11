@@ -14,12 +14,15 @@
 package com.google.devtools.build.lib.skyframe;
 
 import com.google.common.base.Preconditions;
-import com.google.common.collect.Lists;
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Iterables;
 import com.google.devtools.build.lib.cmdline.ResolvedTargets;
 import com.google.devtools.build.lib.cmdline.ResolvedTargets.Builder;
+import com.google.devtools.build.lib.cmdline.TargetParsingException;
+import com.google.devtools.build.lib.cmdline.TargetPattern;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.Immutable;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.ThreadSafe;
-import com.google.devtools.build.lib.pkgcache.FilteringPolicies;
 import com.google.devtools.build.lib.pkgcache.FilteringPolicy;
 import com.google.devtools.build.lib.syntax.Label;
 import com.google.devtools.build.lib.syntax.Label.SyntaxException;
@@ -31,7 +34,6 @@ import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.io.Serializable;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
 
@@ -93,69 +95,94 @@ public final class TargetPatternValue implements SkyValue {
   }
 
   /**
-   * Create a target pattern value key.
+   * Create a target pattern {@link SkyKey}. Throws {@link TargetParsingException} if the provided
+   * {@code pattern} cannot be parsed.
    *
-   * @param pattern The pattern, eg "-foo/biz...". If the first character is "-", the pattern
-   *                is treated as a negative pattern.
+   * @param pattern The pattern, eg "-foo/biz...". If the first character is "-", the pattern is
+   *     treated as a negative pattern.
    * @param policy The filtering policy, eg "only return test targets"
    * @param offset The offset to apply to relative target patterns.
    */
   @ThreadSafe
-  public static SkyKey key(String pattern,
-                            FilteringPolicy policy,
-                            String offset) {
-    return new SkyKey(SkyFunctions.TARGET_PATTERN,
-        pattern.startsWith("-")
-        // Don't apply filters to negative patterns.
-        ? new TargetPattern(pattern.substring(1), FilteringPolicies.NO_FILTER, true, offset)
-        : new TargetPattern(pattern, policy, false, offset));
+  public static SkyKey key(String pattern, FilteringPolicy policy, String offset)
+      throws TargetParsingException {
+    return Iterables.getOnlyElement(keys(ImmutableList.of(pattern), policy, offset)).getSkyKey();
   }
 
   /**
-   * Like above, but accepts a collection of target patterns for the same filtering policy.
+   * Returns an iterable of {@link TargetPatternSkyKeyOrException}, with {@link TargetPatternKey}
+   * arguments. If a provided pattern fails to parse, an element in the returned iterable will
+   * throw when its {@link TargetPatternSkyKeyOrException#getSkyKey} method is called and will
+   * return the failing pattern when its {@link
+   * TargetPatternSkyKeyOrException#getOriginalPattern} method is called.
    *
-   * @param patterns The collection of patterns, eg "-foo/biz...". If the first character is "-",
-   *                 the pattern is treated as a negative pattern.
+   * <p>There may be fewer returned elements than patterns provided as input. This function may
+   * combine patterns to return an iterable of SkyKeys that is equivalent but more efficient to
+   * evaluate.
+   *
+   * @param patterns The list of patterns, eg "-foo/biz...". If a pattern's first character is "-",
+   *     it is treated as a negative pattern.
    * @param policy The filtering policy, eg "only return test targets"
    * @param offset The offset to apply to relative target patterns.
    */
   @ThreadSafe
-  public static Iterable<SkyKey> keys(Collection<String> patterns,
-                                       FilteringPolicy policy,
-                                       String offset) {
-    List<SkyKey> keys = Lists.newArrayListWithCapacity(patterns.size());
+  public static Iterable<TargetPatternSkyKeyOrException> keys(List<String> patterns,
+      FilteringPolicy policy, String offset) {
+    TargetPattern.Parser parser = new TargetPattern.Parser(offset);
+    AggregatedPatterns aggregatedPatterns = new AggregatedPatterns(policy, offset);
+    ImmutableList.Builder<TargetPatternSkyKeyOrException> builder = ImmutableList.builder();
     for (String pattern : patterns) {
-      keys.add(key(pattern, policy, offset));
+      boolean positive = !pattern.startsWith("-");
+      String absoluteValueOfPattern = positive ? pattern : pattern.substring(1);
+      try {
+        aggregatedPatterns.addPattern(
+            new SignedPattern(positive, parser.parse(absoluteValueOfPattern)));
+      } catch (TargetParsingException e) {
+        builder.add(new TargetPatternSkyKeyException(e, absoluteValueOfPattern));
+      }
     }
-     return keys;
-   }
+
+    for (TargetPatternKey patternKey : aggregatedPatterns.build()) {
+      builder.add(
+          new TargetPatternSkyKeyValue(new SkyKey(SkyFunctions.TARGET_PATTERN, patternKey)));
+    }
+
+    return builder.build();
+  }
 
   public ResolvedTargets<Label> getTargets() {
     return targets;
   }
 
   /**
-   * A TargetPattern is a tuple of pattern (eg, "foo/..."), filtering policy, a relative pattern
-   * offset, and whether it is a positive or negative match.
+   * A TargetPatternKey is a tuple of pattern (eg, "foo/..."), filtering policy, a relative pattern
+   * offset, whether it is a positive or negative match, and a set of excluded subdirectories.
    */
   @ThreadSafe
-  public static class TargetPattern implements Serializable {
-    private final String pattern;
+  public static class TargetPatternKey implements Serializable {
+
+    private final TargetPattern parsedPattern;
     private final FilteringPolicy policy;
     private final boolean isNegative;
 
     private final String offset;
+    private final ImmutableSet<String> excludedSubdirectories;
 
-    public TargetPattern(String pattern, FilteringPolicy policy,
-                         boolean isNegative, String offset) {
-      this.pattern = Preconditions.checkNotNull(pattern);
+    public TargetPatternKey(TargetPattern parsedPattern, FilteringPolicy policy,
+        boolean isNegative, String offset, ImmutableSet<String> excludedSubdirectories) {
+      this.parsedPattern = Preconditions.checkNotNull(parsedPattern);
       this.policy = Preconditions.checkNotNull(policy);
       this.isNegative = isNegative;
       this.offset = offset;
+      this.excludedSubdirectories = Preconditions.checkNotNull(excludedSubdirectories);
     }
 
     public String getPattern() {
-      return pattern;
+      return parsedPattern.getOriginalPattern();
+    }
+
+    public TargetPattern getParsedPattern() {
+      return parsedPattern;
     }
 
     public boolean isNegative() {
@@ -170,25 +197,91 @@ public final class TargetPatternValue implements SkyValue {
       return offset;
     }
 
+    public ImmutableSet<String> getExcludedSubdirectories() {
+      return excludedSubdirectories;
+    }
+
     @Override
     public String toString() {
-      return (isNegative ? "-" : "") + pattern;
+      return (isNegative ? "-" : "") + parsedPattern.getOriginalPattern();
     }
 
     @Override
     public int hashCode() {
-      return Objects.hash(pattern, isNegative, policy, offset);
+      return Objects.hash(parsedPattern, isNegative, policy, offset,
+          excludedSubdirectories);
     }
 
     @Override
     public boolean equals(Object obj) {
-      if (!(obj instanceof TargetPattern)) {
+      if (!(obj instanceof TargetPatternKey)) {
         return false;
       }
-      TargetPattern other = (TargetPattern) obj;
+      TargetPatternKey other = (TargetPatternKey) obj;
 
-      return other.isNegative == this.isNegative && other.pattern.equals(this.pattern) &&
-          other.offset.equals(this.offset) && other.policy.equals(this.policy);
+      return other.isNegative == this.isNegative && other.parsedPattern.equals(this.parsedPattern)
+          && other.offset.equals(this.offset) && other.policy.equals(this.policy)
+          && other.excludedSubdirectories.equals(this.excludedSubdirectories);
+    }
+  }
+
+  /**
+   * Wrapper for a target pattern {@link SkyKey} or the {@link TargetParsingException} thrown when
+   * trying to compute it.
+   */
+  public interface TargetPatternSkyKeyOrException {
+
+    /**
+     * Returns the stored {@link SkyKey} or throws {@link TargetParsingException} if one was thrown
+     * when computing the key.
+     */
+    SkyKey getSkyKey() throws TargetParsingException;
+
+    /**
+     * Returns the pattern that resulted in the stored {@link SkyKey} or {@link
+     * TargetParsingException}.
+     */
+    String getOriginalPattern();
+  }
+
+  private static final class TargetPatternSkyKeyValue implements TargetPatternSkyKeyOrException {
+
+    private final SkyKey value;
+
+    private TargetPatternSkyKeyValue(SkyKey value) {
+      this.value = value;
+    }
+
+    @Override
+    public SkyKey getSkyKey() throws TargetParsingException {
+      return value;
+    }
+
+    @Override
+    public String getOriginalPattern() {
+      return ((TargetPatternKey) value.argument()).getPattern();
+    }
+  }
+
+  private static final class TargetPatternSkyKeyException implements
+      TargetPatternSkyKeyOrException {
+
+    private final TargetParsingException exception;
+    private final String originalPattern;
+
+    private TargetPatternSkyKeyException(TargetParsingException exception, String originalPattern) {
+      this.exception = exception;
+      this.originalPattern = originalPattern;
+    }
+
+    @Override
+    public SkyKey getSkyKey() throws TargetParsingException {
+      throw exception;
+    }
+
+    @Override
+    public String getOriginalPattern() {
+      return originalPattern;
     }
   }
 }
