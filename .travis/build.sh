@@ -21,6 +21,9 @@ if [ -z "${TRAVIS_OS_NAME+x}" ]; then
     exit 1
 fi
 
+# Quick test
+locale
+
 if [[ $TRAVIS_OS_NAME = 'osx' ]]; then
     export JAVA_VERSION=1.7
     sed -i.bak 's/_version = "8",/_version = "7",/' tools/jdk/BUILD
